@@ -9,6 +9,22 @@ static const int kCols = x3270::ScreenBuffer::COLS;
 // OIA (Operator Information Area) extra rows below the 3270 screen
 static const int kOIARows = 2;
 
+// ── IBM 3279 extended colour palette ─────────────────────────────────────────
+// Maps the 3270 extended attribute colour code (0xF1-0xF7) to an NSColor.
+// Returns nil for unknown/default codes; caller uses the field-attribute default.
+static NSColor *colorFor3270Code(uint8_t code) {
+    switch (code) {
+    case 0xF1: return [NSColor colorWithRed:0.22 green:0.52 blue:1.00 alpha:1.0]; // blue
+    case 0xF2: return [NSColor colorWithRed:1.00 green:0.33 blue:0.33 alpha:1.0]; // red
+    case 0xF3: return [NSColor colorWithRed:1.00 green:0.44 blue:1.00 alpha:1.0]; // pink/magenta
+    case 0xF4: return [NSColor colorWithRed:0.20 green:0.85 blue:0.20 alpha:1.0]; // green
+    case 0xF5: return [NSColor colorWithRed:0.20 green:0.85 blue:0.85 alpha:1.0]; // turquoise/cyan
+    case 0xF6: return [NSColor colorWithRed:0.85 green:0.85 blue:0.20 alpha:1.0]; // yellow
+    case 0xF7: return [NSColor colorWithRed:0.85 green:0.85 blue:0.85 alpha:1.0]; // neutral white
+    default:   return nil;
+    }
+}
+
 @implementation TerminalView {
     x3270::ScreenBuffer*  _screen;
     x3270::KeyboardState* _kbd;
@@ -27,11 +43,11 @@ static const int kOIARows = 2;
         _codec = x3270::EbcdicCodec(x3270::CodePage::CP037);
         _cursorVisible = YES;
 
-        // Default green-screen palette
-        _foregroundColor  = [NSColor colorWithRed:0.0 green:0.85 blue:0.0 alpha:1.0];
-        _backgroundColor  = [NSColor colorWithRed:0.0 green:0.0  blue:0.0 alpha:1.0];
-        _intensifiedColor = [NSColor colorWithRed:1.0 green:1.0  blue:1.0 alpha:1.0];
-        _cursorColor      = [NSColor colorWithRed:0.0 green:0.85 blue:0.0 alpha:1.0];
+        // Default 3270 colour palette (matches IBM 3279 standard defaults)
+        _foregroundColor  = [NSColor colorWithRed:0.20 green:0.85 blue:0.20 alpha:1.0]; // green (unprotected normal)
+        _backgroundColor  = [NSColor colorWithRed:0.0  green:0.0  blue:0.0  alpha:1.0]; // black
+        _intensifiedColor = [NSColor colorWithRed:1.00 green:0.33 blue:0.33 alpha:1.0]; // red  (unprotected intensified)
+        _cursorColor      = [NSColor colorWithRed:0.20 green:0.85 blue:0.20 alpha:1.0]; // green
         _terminalFont     = [NSFont fontWithName:@"Menlo" size:14.0]
                          ?: [NSFont monospacedSystemFontOfSize:14.0 weight:NSFontWeightRegular];
 
@@ -105,45 +121,97 @@ static const int kOIARows = 2;
             int pos = row * kCols + col;
             const x3270::Cell& cell = _screen->at(pos);
 
-            // Attribute positions are displayed as blanks
+            // Attribute positions are rendered as blanks (background colour only)
             if (cell.isFA) continue;
 
-            // Skip non-display fields (password fields)
+            // Skip non-display (password) fields — draw nothing
             if (cell.isNonDisplay()) continue;
 
-            // Determine colour
-            NSColor *fg = cell.isIntensified() ? _intensifiedColor : _foregroundColor;
+            // ── Foreground colour ─────────────────────────────────────────────
+            // Priority: per-cell SA extended colour > FA-attribute default colour
+            NSColor *fg;
+            if (cell.fgColor != 0x00) {
+                fg = colorFor3270Code(cell.fgColor) ?: _foregroundColor;
+            } else {
+                // DEFCOLOR_MAP: index 0-3 from protected (bit5) + intensified (bit3)
+                // 0=unprotected-normal, 1=unprotected-intensified,
+                // 2=protected-normal,   3=protected-intensified
+                int colorIdx = ((cell.attr & 0x20) >> 4) | ((cell.attr & 0x08) >> 3);
+                switch (colorIdx) {
+                case 1:  fg = _intensifiedColor; break;  // red
+                case 2:  fg = [NSColor colorWithRed:0.22 green:0.52 blue:1.00 alpha:1.0]; break; // blue
+                case 3:  fg = [NSColor colorWithRed:0.85 green:0.85 blue:0.85 alpha:1.0]; break; // white
+                default: fg = _foregroundColor; break;   // green
+                }
+            }
 
-            // Convert EBCDIC to displayable character
-            uint16_t unicode = _codec.toUnicode(cell.ch);
-            if (unicode == 0 || unicode < 0x20) continue; // non-printable / null
+            // ── Background colour ─────────────────────────────────────────────
+            NSColor *bg = (cell.bgColor != 0x00)
+                ? (colorFor3270Code(cell.bgColor) ?: _backgroundColor)
+                : _backgroundColor;
+
+            // ── Reverse-video highlight (0xF2) ────────────────────────────────
+            if (cell.highlight == 0xF2) {
+                NSColor *tmp = fg; fg = bg; bg = tmp;
+            }
 
             // Cell rect (Y=0 is bottom in Cocoa)
-            CGFloat x = col * _charW;
-            CGFloat y = self.bounds.size.height - (row + 1) * _charH;
+            CGFloat cx = col * _charW;
+            CGFloat cy = self.bounds.size.height - (row + 1) * _charH;
 
-            NSString *ch = [NSString stringWithFormat:@"%C", (unichar)unicode];
-            NSDictionary *attrs = @{
-                NSFontAttributeName:            _terminalFont,
-                NSForegroundColorAttributeName: fg,
-            };
-            [ch drawAtPoint:NSMakePoint(x, y + _baseline) withAttributes:attrs];
+            // Fill cell background when it differs from the global background
+            if (bg != _backgroundColor) {
+                [bg setFill];
+                NSRectFill(NSMakeRect(cx, cy, _charW, _charH));
+            }
+
+            // Draw character
+            uint16_t unicode = _codec.toUnicode(cell.ch);
+            if (unicode >= 0x20) {
+                NSString *ch = [NSString stringWithFormat:@"%C", (unichar)unicode];
+                NSDictionary *charAttrs = @{
+                    NSFontAttributeName:            _terminalFont,
+                    NSForegroundColorAttributeName: fg,
+                };
+                [ch drawAtPoint:NSMakePoint(cx, cy + _baseline) withAttributes:charAttrs];
+            }
+
+            // ── Underscore highlight (0xF4) ───────────────────────────────────
+            if (cell.highlight == 0xF4) {
+                [fg setStroke];
+                NSBezierPath *line = [NSBezierPath bezierPath];
+                [line setLineWidth:1.0];
+                [line moveToPoint:NSMakePoint(cx,          cy + 1.0)];
+                [line lineToPoint:NSMakePoint(cx + _charW, cy + 1.0)];
+                [line stroke];
+            }
         }
     }
 
-    // Draw cursor
-    if (_cursorVisible && _kbd && !_kbd->isLocked()) {
+    // Draw block cursor (always visible during blink-on phase, regardless of lock state)
+    if (_cursorVisible && _screen) {
         int curPos = _screen->cursorPos();
         int curRow = curPos / kCols;
         int curCol = curPos % kCols;
+        const x3270::Cell& curCell = _screen->at(curPos);
         CGFloat cx = curCol * _charW;
         CGFloat cy = self.bounds.size.height - (curRow + 1) * _charH;
-        NSRect cursorRect = NSMakeRect(cx, cy, _charW, _charH);
+
+        // Block cursor: fill cell with cursor colour, then re-draw character inverted
         [_cursorColor setFill];
-        [NSBezierPath fillRect:NSMakeRect(cursorRect.origin.x,
-                                          cursorRect.origin.y,
-                                          cursorRect.size.width,
-                                          2.0)]; // underline cursor
+        NSRectFill(NSMakeRect(cx, cy, _charW, _charH));
+
+        if (!curCell.isFA && !curCell.isNonDisplay()) {
+            uint16_t cunicode = _codec.toUnicode(curCell.ch);
+            if (cunicode >= 0x20) {
+                NSString *cch = [NSString stringWithFormat:@"%C", (unichar)cunicode];
+                NSDictionary *cAttrs = @{
+                    NSFontAttributeName:            _terminalFont,
+                    NSForegroundColorAttributeName: _backgroundColor,
+                };
+                [cch drawAtPoint:NSMakePoint(cx, cy + _baseline) withAttributes:cAttrs];
+            }
+        }
     }
 
     // Draw OIA (status bar)
@@ -191,23 +259,27 @@ static const int kOIARows = 2;
                       pos / kCols + 1, pos % kCols + 1];
     }
 
-    // Version string (read once from bundle)
+    CGFloat oiaTextY = oiaY + _baseline;
+    [statusStr drawAtPoint:NSMakePoint(4, oiaTextY) withAttributes:attrs];
+    [cursorInfo drawAtPoint:NSMakePoint(self.bounds.size.width - 80, oiaTextY) withAttributes:attrs];
+
+    // Version string drawn dimly in the lower OIA row (does not overlap status)
     static NSString *versionStr = nil;
     static dispatch_once_t vOnce;
     dispatch_once(&vOnce, ^{
         NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
-        NSString *v = info[@"CFBundleShortVersionString"] ?: @"1.0.3";
+        NSString *v = info[@"CFBundleShortVersionString"] ?: @"1.1.0";
         NSString *b = info[@"CFBundleVersion"] ?: @"1";
         versionStr = [NSString stringWithFormat:@"X3270 v%@ build %@  \u2014  \u00a9 2026 Swen Skalski", v, b];
     });
-
-    CGFloat oiaTextY = oiaY + _baseline;
-    [statusStr drawAtPoint:NSMakePoint(4, oiaTextY) withAttributes:attrs];
-    // Version centered in OIA
-    NSSize vSize = [versionStr sizeWithAttributes:attrs];
+    NSColor *dimColor = [NSColor colorWithWhite:0.3 alpha:1.0];
+    NSDictionary *dimAttrs = @{
+        NSFontAttributeName:            _terminalFont,
+        NSForegroundColorAttributeName: dimColor,
+    };
+    NSSize vSize = [versionStr sizeWithAttributes:dimAttrs];
     CGFloat vX = floor((self.bounds.size.width - vSize.width) / 2.0);
-    [versionStr drawAtPoint:NSMakePoint(vX, oiaTextY) withAttributes:attrs];
-    [cursorInfo drawAtPoint:NSMakePoint(self.bounds.size.width - 80, oiaTextY) withAttributes:attrs];
+    [versionStr drawAtPoint:NSMakePoint(vX, _baseline) withAttributes:dimAttrs];
 }
 
 // ── Key handling ──────────────────────────────────────────────────────────────

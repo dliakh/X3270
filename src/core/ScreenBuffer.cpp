@@ -23,14 +23,20 @@ ScreenBuffer::ScreenBuffer() {
 // ── Buffer operations ─────────────────────────────────────────────────────────
 void ScreenBuffer::eraseAll() {
     for (auto& c : cells_) {
-        c.ch   = 0x00;
-        c.attr = 0x00;
-        c.isFA = false;
+        c.ch        = 0x00;
+        c.attr      = 0x00;
+        c.isFA      = false;
+        c.fgColor   = 0x00;
+        c.bgColor   = 0x00;
+        c.highlight = 0x00;
     }
-    cursorPos_   = 0;
-    bufPtr_      = 0;
-    currentAttr_ = 0x00;
-    dirty_       = true;
+    cursorPos_        = 0;
+    bufPtr_           = 0;
+    currentAttr_      = 0x00;
+    currentFgColor_   = 0x00;
+    currentBgColor_   = 0x00;
+    currentHighlight_ = 0x00;
+    dirty_            = true;
 }
 
 void ScreenBuffer::eraseAllUnprotected() {
@@ -49,18 +55,30 @@ void ScreenBuffer::eraseAllUnprotected() {
 }
 
 void ScreenBuffer::writeChar(uint8_t ebcdic) {
-    cells_[bufPtr_].ch   = ebcdic;
-    cells_[bufPtr_].attr = currentAttr_;  // inherit governing field's attribute
-    cells_[bufPtr_].isFA = false;
+    Cell& c     = cells_[bufPtr_];
+    c.ch        = ebcdic;
+    c.attr      = currentAttr_;
+    c.isFA      = false;
+    c.fgColor   = currentFgColor_;
+    c.bgColor   = currentBgColor_;
+    c.highlight = currentHighlight_;
     bufPtr_ = clamp(bufPtr_ + 1);
     dirty_ = true;
 }
 
-void ScreenBuffer::startField(uint8_t attrByte) {
-    cells_[bufPtr_].ch   = 0x00;
-    cells_[bufPtr_].attr = attrByte;
-    cells_[bufPtr_].isFA = true;
-    currentAttr_ = attrByte;   // subsequent writeChar calls inherit this field's attr
+void ScreenBuffer::startField(uint8_t attrByte, uint8_t fgColor, uint8_t bgColor, uint8_t highlight) {
+    Cell& c     = cells_[bufPtr_];
+    c.ch        = 0x00;
+    c.attr      = attrByte;
+    c.isFA      = true;
+    c.fgColor   = fgColor;
+    c.bgColor   = bgColor;
+    c.highlight = highlight;
+    // The field’s extended colour becomes the default for subsequent characters
+    currentAttr_      = attrByte;
+    currentFgColor_   = fgColor;
+    currentBgColor_   = bgColor;
+    currentHighlight_ = highlight;
     bufPtr_ = clamp(bufPtr_ + 1);
     dirty_ = true;
 }
@@ -68,9 +86,13 @@ void ScreenBuffer::startField(uint8_t attrByte) {
 void ScreenBuffer::repeatToAddress(int destOffset, uint8_t ebcdic) {
     int dest = clamp(destOffset);
     while (bufPtr_ != dest) {
-        cells_[bufPtr_].ch   = ebcdic;
-        cells_[bufPtr_].attr = currentAttr_;
-        cells_[bufPtr_].isFA = false;
+        Cell& c     = cells_[bufPtr_];
+        c.ch        = ebcdic;
+        c.attr      = currentAttr_;
+        c.isFA      = false;
+        c.fgColor   = currentFgColor_;
+        c.bgColor   = currentBgColor_;
+        c.highlight = currentHighlight_;
         bufPtr_ = clamp(bufPtr_ + 1);
     }
     dirty_ = true;

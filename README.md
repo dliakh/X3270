@@ -135,14 +135,35 @@ BUILD_NUMBER=42 ./package.sh
 
 ## Version History
 
-### v1.0.3 — 2026-05-21
+### v1.1.0 — 2026-05-22
+
+**IBM 3279 color rendering**
+- **Extended attribute support (SA / SFE)** — `Set Attribute` (0x28) and `Set Field Extended` (0x29) structured fields are now fully parsed. Foreground color (type 0x42), background color (type 0x45), and highlighting (type 0x41) attributes are stored per cell and carried through `startField` / `writeChar`.
+- **IBM 3279 colour palette** — Seven standard IBM colors rendered correctly: blue (0xF1), red (0xF2), pink (0xF3), green (0xF4), turquoise (0xF5), yellow (0xF6), white (0xF7). Default field color derived from the field attribute Protected/Numeric/MDT bits (green / red / blue / white quadrant).
+- **Intensified fields** — Unprotected-intensified fields now render in red (IBM default) instead of white.
+- **Reverse video (highlight 0xF2)** — Foreground and background swapped at render time.
+- **Underscore (highlight 0xF4)** — 1 px bottom stroke drawn per cell.
+- **Per-cell background fill** — Non-default cell backgrounds are filled before drawing the character.
+- **Fixed `FA_DISP_LP` constant** — Was `0x08`, corrected to `0x04` per IBM GA23-0059.
+
+**Keyboard / function key fixes**
+- **Fixed PF10 / PF11 / PF12 AID codes** — The emulator was sending `0xFA / 0xFB / 0xFC` for these keys. The IBM GA23-0059 standard mandates `0x7A / 0x7B / 0x7C`. ISPF (and all other 3270 hosts) do not recognise the wrong codes, so F12 (and F10/F11) had no effect. Fixed by replacing the broken `0xF0 + n` arithmetic with the correct IBM lookup table. PF22–PF24 (Shift+F10/11/12) were similarly wrong (`0xCA–CC` → `0x4A–4C`).
+- **Added `performKeyEquivalent:` override in `TerminalView`** — macOS routes some function-key events through the key-equivalent path (menu shortcut resolution) rather than `keyDown:`, silently dropping them. The override mirrors the full PF1–PF24 / Shift+F1–F12 mapping so those events are consumed by the terminal regardless of which path the OS uses.
+
+**Cursor and OIA improvements**
+- **Block cursor** — Replaced the thin underline cursor with a full block cursor (cell filled with cursor color, character re-drawn in background color). The cursor is now visible at all times including when the keyboard is locked.
+- **OIA layout** — Version string moved to the lower OIA row to avoid overlapping the status and cursor-position indicators.
+
+**Connect dialog — connection history**
+- The **Host** field is now an editable drop-down combo box. Every successful connection is saved to a history list (up to 20 entries, most recent first, deduplicated by host:port).
+- Selecting a previous entry from the list automatically restores the paired **Port**, **SSL/TLS**, **CA Bundle**, and **Code Page** settings — no need to re-enter them.
+- History is persisted in `NSUserDefaults` across app launches.
+
+### v1.0.3 — 2026-05-22
 
 **ISPF / 3270 data stream fixes**
 - **Fixed: ISPF screen input error code 23 on protected fields** — `Read Modified` responses were including protected fields that had MDT=1 (host-written output fields). Per IBM GA23-0059, `Read Modified` must return *only* unprotected (input) fields; sending protected field data back caused ISPF to reject the input with error code 23. Fix: `getModifiedFields()` now skips any FA cell with the Protected bit set.
 - **Fixed: `Read Modified All` now correctly returns all MDT fields** — `CMD_READ_MODIFIED_ALL` (0x0E/0x6E) was handled identically to `CMD_READ_MODIFIED`, so the protected-field filter was incorrectly applied to host-solicited "all fields" polls as well. Per spec, `Read Modified All` must include both protected and unprotected modified fields. The two commands are now handled separately; `buildReadModifiedRecord` accepts an `includeProtected` flag.
-
-**Keyboard / function key fixes**
-- **Added `performKeyEquivalent:` override in `TerminalView`** — macOS routes some function-key events through the key-equivalent path (menu shortcut resolution) rather than `keyDown:`, silently dropping them. The override mirrors the full PF1–PF24 / Shift+F1–F12 mapping so those events are consumed by the terminal regardless of which path the OS uses.
 
 ### v1.0.2 — 2026-05-19
 

@@ -3,6 +3,6 @@
 
 /// Shows a connection sheet: host, port, SSL toggle, code page.
 /// On connect, opens a TerminalWindowController.
-@interface ConnectionWindowController : NSWindowController
+@interface ConnectionWindowController : NSWindowController <NSComboBoxDelegate>
 
 @end

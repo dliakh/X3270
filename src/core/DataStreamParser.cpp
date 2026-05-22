@@ -65,8 +65,11 @@ void DataStreamParser::processRecord(const std::vector<uint8_t>& record) {
             state_ = ParseState::Data;
             break;
         case ParseState::SFE_Count:
-            sfeCount_ = b;
-            sfeCurAttr_ = 0x00;
+            sfeCount_    = b;
+            sfeCurAttr_  = 0x00;
+            sfeFgColor_  = 0x00;
+            sfeBgColor_  = 0x00;
+            sfeHighlight_= 0x00;
             if (sfeCount_ == 0) {
                 screen_.startField(0x00);
                 state_ = ParseState::Data;
@@ -79,11 +82,18 @@ void DataStreamParser::processRecord(const std::vector<uint8_t>& record) {
             state_ = ParseState::SFE_Value;
             break;
         case ParseState::SFE_Value:
-            // Type 0xC0 = field attribute (basic)
-            if (sfeType_ == 0xC0) sfeCurAttr_ = b;
+            // Attribute type dispatch:
+            //   0xC0 = basic field attribute (FA byte)
+            //   0x41 = extended highlighting (0xF1=blink, 0xF2=reverse, 0xF4=underscore)
+            //   0x42 = foreground colour (0xF1-0xF7 IBM 3279 palette)
+            //   0x45 = background colour
+            if      (sfeType_ == 0xC0) sfeCurAttr_   = b;
+            else if (sfeType_ == 0x41) sfeHighlight_  = b;
+            else if (sfeType_ == 0x42) sfeFgColor_    = b;
+            else if (sfeType_ == 0x45) sfeBgColor_    = b;
             --sfeCount_;
             if (sfeCount_ == 0) {
-                screen_.startField(sfeCurAttr_);
+                screen_.startField(sfeCurAttr_, sfeFgColor_, sfeBgColor_, sfeHighlight_);
                 state_ = ParseState::Data;
             } else {
                 state_ = ParseState::SFE_Type;
@@ -94,7 +104,12 @@ void DataStreamParser::processRecord(const std::vector<uint8_t>& record) {
             state_ = ParseState::SA_Value;
             break;
         case ParseState::SA_Value:
-            // Phase 1: ignore extended attributes (color, highlight)
+            // SA (Set Attribute) applies to subsequent characters until field boundary.
+            // Type codes match SFE: 0x42=fg colour, 0x45=bg colour, 0x41=highlight.
+            // A value of 0x00 resets that attribute to the field default.
+            if      (sfeType_ == 0x42) screen_.setCurrentFgColor(b);
+            else if (sfeType_ == 0x45) screen_.setCurrentBgColor(b);
+            else if (sfeType_ == 0x41) screen_.setCurrentHighlight(b);
             state_ = ParseState::Data;
             break;
         case ParseState::MF_Count:

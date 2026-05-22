@@ -14,15 +14,20 @@ static constexpr uint8_t AID_CLEAR   = 0x6D;
 static constexpr uint8_t AID_PA1     = 0x6C;
 static constexpr uint8_t AID_PA2     = 0x6E;
 static constexpr uint8_t AID_PA3     = 0x6B;
-// PF1-PF12: 0xF1-0xFC
-// PF13-PF24: 0xC1-0xCC
+// PF1-PF24 AID codes per IBM GA23-0059 (3270 Data Stream Programming Reference)
+// Note: PF10-12 are 0x7A-7C (NOT 0xFA-FC); PF22-24 are 0x4A-4C (NOT 0xCA-CC).
 static constexpr uint8_t AID_SYSREQ  = 0xF0;
 static constexpr uint8_t AID_STRUCTURED_FIELD = 0x88;
 
-// Map PF1-24 to AID codes
+// Map PF1-24 to AID codes (IBM standard lookup table)
 inline uint8_t pfAID(int n) {
-    if (n >= 1 && n <= 12)  return static_cast<uint8_t>(0xF0 + n);
-    if (n >= 13 && n <= 24) return static_cast<uint8_t>(0xC0 + (n - 12));
+    static constexpr uint8_t kPFAid[24] = {
+        0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, // PF1-8
+        0xF9, 0x7A, 0x7B, 0x7C,                          // PF9-12
+        0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, // PF13-20
+        0xC9, 0x4A, 0x4B, 0x4C                           // PF21-24
+    };
+    if (n >= 1 && n <= 24) return kPFAid[n - 1];
     return AID_ENTER;
 }
 

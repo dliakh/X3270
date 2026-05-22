@@ -2,7 +2,7 @@
 #import "TerminalWindowController.h"
 
 @implementation ConnectionWindowController {
-    NSTextField    *_hostField;
+    NSComboBox     *_hostCombo;
     NSTextField    *_portField;
     NSButton       *_sslCheckbox;
     NSTextField    *_caField;
@@ -10,7 +10,8 @@
     NSButton       *_connectButton;
     NSTextField    *_statusLabel;
 
-    NSMutableArray<TerminalWindowController*> *_terminals;
+    NSMutableArray<TerminalWindowController*>  *_terminals;
+    NSMutableArray<NSDictionary*>              *_connectionHistory;
 }
 
 - (instancetype)init {
@@ -28,7 +29,7 @@
     if ((self = [super initWithWindow:win])) {
         _terminals = [NSMutableArray array];
         [self buildUI];
-        [self restoreLastConnection];
+        [self restoreConnectionHistory];
     }
     return self;
 }
@@ -41,7 +42,7 @@
     __block CGFloat curY = 220;
 
     // ── Header: app name, version and author ──────────────────────────────────
-    NSString *version = NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"] ?: @"1.0.3";
+    NSString *version = NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"] ?: @"1.1.0";
 
     NSTextField *appName = [NSTextField labelWithString:@"X3270"];
     appName.font = [NSFont boldSystemFontOfSize:16];
@@ -88,10 +89,13 @@
         curY -= rowH + gap;
     };
 
-    // Host
-    _hostField = [NSTextField textFieldWithString:@""];
-    _hostField.placeholderString = @"hostname or IP";
-    addRow(@"Host:", _hostField);
+    // Host — editable combo with connection history
+    _hostCombo = [[NSComboBox alloc] init];
+    _hostCombo.placeholderString = @"hostname or IP";
+    _hostCombo.completes = YES;
+    _hostCombo.numberOfVisibleItems = 10;
+    _hostCombo.delegate = self;
+    addRow(@"Host:", _hostCombo);
 
     // Port
     _portField = [NSTextField textFieldWithString:@"23"];
@@ -151,7 +155,7 @@
 }
 
 - (void)connect:(id)sender {
-    NSString *host = [_hostField.stringValue stringByTrimmingCharactersInSet:
+    NSString *host = [_hostCombo.stringValue stringByTrimmingCharactersInSet:
                       [NSCharacterSet whitespaceCharacterSet]];
     if (host.length == 0) {
         _statusLabel.stringValue = @"Please enter a hostname.";
@@ -177,7 +181,7 @@
 
     _connectButton.enabled = NO;
     _statusLabel.stringValue = @"Connecting…";
-    [self saveLastConnection];
+    [self saveConnectionToHistory];
 
     TerminalWindowController *twc =
         [[TerminalWindowController alloc] initWithHost:host
@@ -217,30 +221,87 @@
 - (NSButton*)connectButton  { return _connectButton; }
 - (NSMutableArray*)terminals { return _terminals; }
 
-// ── NSUserDefaults persistence ────────────────────────────────────────────────
-- (void)restoreLastConnection {
-    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
-    NSString *host = [ud stringForKey:@"x3270.lastHost"];
-    NSString *port = [ud stringForKey:@"x3270.lastPort"];
-    if (host.length > 0) _hostField.stringValue = host;
-    if (port.length > 0) _portField.stringValue = port;
-    BOOL ssl = [ud boolForKey:@"x3270.lastSSL"];
-    _sslCheckbox.state = ssl ? NSControlStateValueOn : NSControlStateValueOff;
-    _caField.hidden = !ssl;
-    NSInteger cp = [ud integerForKey:@"x3270.lastCodePage"];
-    if (cp >= 0 && cp < (NSInteger)_codePagePopup.numberOfItems) {
-        [_codePagePopup selectItemAtIndex:cp];
+// ── Connection history persistence ───────────────────────────────────────────
+static NSString * const kHistoryKey = @"x3270.connectionHistory";
+static const NSInteger  kHistoryMax = 20;
+
+/// Label shown in the drop-down for a history entry ("host:port" or "host:port [SSL]").
+- (NSString *)labelForEntry:(NSDictionary *)entry {
+    NSString *suffix = [entry[@"ssl"] boolValue] ? @" [SSL]" : @"";
+    return [NSString stringWithFormat:@"%@:%@%@", entry[@"host"], entry[@"port"], suffix];
+}
+
+/// Rebuild combo box items from _connectionHistory.
+- (void)rebuildComboItems {
+    [_hostCombo removeAllItems];
+    for (NSDictionary *e in _connectionHistory)
+        [_hostCombo addItemWithObjectValue:[self labelForEntry:e]];
+}
+
+/// Load history and pre-fill fields from the most recent entry.
+- (void)restoreConnectionHistory {
+    NSArray *saved = [[NSUserDefaults standardUserDefaults] arrayForKey:kHistoryKey];
+    _connectionHistory = saved ? [saved mutableCopy] : [NSMutableArray array];
+    [self rebuildComboItems];
+    if (_connectionHistory.count > 0) {
+        NSDictionary *last = _connectionHistory[0];
+        _hostCombo.stringValue  = last[@"host"] ?: @"";
+        _portField.stringValue  = last[@"port"] ?: @"23";
+        BOOL ssl = [last[@"ssl"] boolValue];
+        _sslCheckbox.state = ssl ? NSControlStateValueOn : NSControlStateValueOff;
+        _caField.hidden = !ssl;
+        _caField.stringValue = last[@"ca"] ?: @"";
+        NSInteger cp = [last[@"codepage"] integerValue];
+        if (cp >= 0 && cp < _codePagePopup.numberOfItems)
+            [_codePagePopup selectItemAtIndex:cp];
     }
 }
 
-- (void)saveLastConnection {
-    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
-    [ud setObject:_hostField.stringValue        forKey:@"x3270.lastHost"];
-    [ud setObject:_portField.stringValue        forKey:@"x3270.lastPort"];
-    [ud setBool:(_sslCheckbox.state == NSControlStateValueOn)
-         forKey:@"x3270.lastSSL"];
-    [ud setInteger:_codePagePopup.indexOfSelectedItem
-            forKey:@"x3270.lastCodePage"];
+/// Push current connection to top of history; deduplicate by host:port; cap at kHistoryMax.
+- (void)saveConnectionToHistory {
+    NSString *host = [_hostCombo.stringValue
+                      stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    NSString *port = _portField.stringValue;
+    BOOL      ssl  = (_sslCheckbox.state == NSControlStateValueOn);
+
+    NSDictionary *entry = @{
+        @"host":     host,
+        @"port":     port,
+        @"ssl":      @(ssl),
+        @"ca":       _caField.stringValue ?: @"",
+        @"codepage": @(_codePagePopup.indexOfSelectedItem),
+    };
+
+    // Remove existing entry for same host:port so it moves to top
+    NSString *key = [NSString stringWithFormat:@"%@:%@", host, port];
+    [_connectionHistory filterUsingPredicate:[NSPredicate predicateWithBlock:
+        ^BOOL(NSDictionary *e, id __unused b) {
+            return ![[NSString stringWithFormat:@"%@:%@", e[@"host"], e[@"port"]]
+                     isEqualToString:key];
+        }]];
+
+    [_connectionHistory insertObject:entry atIndex:0];
+    if (_connectionHistory.count > kHistoryMax)
+        [_connectionHistory removeLastObject];
+
+    [[NSUserDefaults standardUserDefaults] setObject:_connectionHistory forKey:kHistoryKey];
+    [self rebuildComboItems];
+}
+
+// ── NSComboBoxDelegate ────────────────────────────────────────────────────────
+- (void)comboBoxSelectionDidChange:(NSNotification *)notification {
+    NSInteger idx = _hostCombo.indexOfSelectedItem;
+    if (idx < 0 || idx >= (NSInteger)_connectionHistory.count) return;
+    NSDictionary *entry = _connectionHistory[idx];
+    _hostCombo.stringValue  = entry[@"host"];
+    _portField.stringValue  = entry[@"port"];
+    BOOL ssl = [entry[@"ssl"] boolValue];
+    _sslCheckbox.state = ssl ? NSControlStateValueOn : NSControlStateValueOff;
+    _caField.hidden = !ssl;
+    _caField.stringValue = entry[@"ca"] ?: @"";
+    NSInteger cp = [entry[@"codepage"] integerValue];
+    if (cp >= 0 && cp < _codePagePopup.numberOfItems)
+        [_codePagePopup selectItemAtIndex:cp];
 }
 
 @end

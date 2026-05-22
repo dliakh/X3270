@@ -107,6 +107,9 @@ private:
     uint8_t      sfeCount_{ 0 };
     uint8_t      sfeType_ { 0 };
     uint8_t      sfeCurAttr_{ 0 };
+    uint8_t      sfeFgColor_{ 0 };   // SFE/SA foreground colour accumulator
+    uint8_t      sfeBgColor_{ 0 };   // SFE/SA background colour accumulator
+    uint8_t      sfeHighlight_{ 0 }; // SFE/SA highlight accumulator
     uint8_t      mfCount_ { 0 };
     uint8_t      mfType_  { 0 };
 

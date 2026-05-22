@@ -13,22 +13,27 @@ namespace x3270 {
 static constexpr uint8_t FA_PROTECTED   = 0x20;
 static constexpr uint8_t FA_NUMERIC     = 0x10;
 static constexpr uint8_t FA_DISP_NORMAL = 0x00;
-static constexpr uint8_t FA_DISP_LP     = 0x08;  // normal + light-pen detect
-static constexpr uint8_t FA_INTENSIFIED = 0x08;  // (bits 4-5 = 10) = 0x08 in 6-bit mapping
-static constexpr uint8_t FA_NONDISPLAY  = 0x0C;
+static constexpr uint8_t FA_DISP_LP     = 0x04;  // bits[3:2]=01 → normal + light-pen detect
+static constexpr uint8_t FA_INTENSIFIED = 0x08;  // bits[3:2]=10 → intensified
+static constexpr uint8_t FA_NONDISPLAY  = 0x0C;  // bits[3:2]=11 → non-display (hidden)
 static constexpr uint8_t FA_MDT        = 0x01;
 
 // ── Cell ─────────────────────────────────────────────────────────────────────
 struct Cell {
-    uint8_t  ch   { 0x00 }; // EBCDIC character byte (0x00 = empty/null)
-    uint8_t  attr { 0x00 }; // Field attribute byte of the governing field
-    bool     isFA { false }; // true if this cell IS a field attribute position
+    uint8_t  ch        { 0x00 }; // EBCDIC character byte (0x00 = empty/null)
+    uint8_t  attr      { 0x00 }; // Field attribute byte of the governing field
+    bool     isFA      { false }; // true if this cell IS a field attribute position
+    // Extended colour/highlight attributes (from SA or SFE orders):
+    // 0x00 = use field-attribute default; 0xF1-0xF7 = IBM 3279 colour index
+    uint8_t  fgColor   { 0x00 }; // foreground colour (0=field-default)
+    uint8_t  bgColor   { 0x00 }; // background colour (0=black)
+    uint8_t  highlight { 0x00 }; // 0=normal, 0xF2=reverse, 0xF4=underscore, 0xF1=blink
 
     bool isProtected()  const { return (attr & FA_PROTECTED) != 0; }
     bool isNumeric()    const { return (attr & FA_NUMERIC)   != 0; }
     bool isSkip()       const { return (attr & (FA_PROTECTED|FA_NUMERIC)) == (FA_PROTECTED|FA_NUMERIC); }
     bool isNonDisplay() const { return (attr & 0x0C) == FA_NONDISPLAY; }
-    bool isIntensified()const { return (attr & 0x0C) == 0x08; }
+    bool isIntensified()const { return (attr & 0x0C) == FA_INTENSIFIED; }
     bool isMDT()        const { return (attr & FA_MDT) != 0; }
 };
 
@@ -60,8 +65,17 @@ public:
     /// Write a character at bufferPointer_, then advance it
     void writeChar(uint8_t ebcdic);
 
-    /// Start a new field at bufferPointer_ with given attribute byte
-    void startField(uint8_t attrByte);
+    /// Start a new field at bufferPointer_.
+    /// fgColor/bgColor/highlight are IBM 3279 extended colour codes (0x00=default, 0xF1-0xF7).
+    void startField(uint8_t attrByte,
+                    uint8_t fgColor   = 0x00,
+                    uint8_t bgColor   = 0x00,
+                    uint8_t highlight = 0x00);
+
+    /// Update the "current" SA-order colour/highlight applied to subsequent writeChar calls.
+    void setCurrentFgColor(uint8_t c)   { currentFgColor_   = c; }
+    void setCurrentBgColor(uint8_t c)   { currentBgColor_   = c; }
+    void setCurrentHighlight(uint8_t c) { currentHighlight_ = c; }
 
     /// Set buffer pointer (SetBufferAddress order)
     void setBufferAddress(int offset) { bufPtr_ = clamp(offset); }
@@ -115,10 +129,13 @@ private:
     int findFieldStart(int bufPos) const;
 
     Cell    cells_[SIZE] {};
-    int     cursorPos_     { 0 };
-    int     bufPtr_        { 0 };
-    bool    dirty_         { false };
-    uint8_t currentAttr_   { 0x00 };  // attr of the most-recently opened field
+    int     cursorPos_        { 0 };
+    int     bufPtr_           { 0 };
+    bool    dirty_            { false };
+    uint8_t currentAttr_      { 0x00 };  // field attr of the most-recently opened field
+    uint8_t currentFgColor_   { 0x00 };  // active extended fg colour (SA or SFE)
+    uint8_t currentBgColor_   { 0x00 };  // active extended bg colour
+    uint8_t currentHighlight_ { 0x00 };  // active highlight (reverse/underscore/blink)
 
     // Buffer address decode table (64 entries, 6-bit index → 8-bit wire byte)
     static const uint8_t kCodeTable[64];
