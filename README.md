@@ -26,6 +26,24 @@ If you work in Mainframe and you're tired of paying for the privilege, this is f
 
 ---
 
+## IBM 3270 Font
+
+X3270 ships with the authentic **IBM 3270 terminal font** by [Ricardo Bánffy](https://github.com/rbanffy/3270font), bundled directly in the app. It is off by default so the familiar Menlo monospace is used out of the box.
+
+![Terminal with IBM 3270 font active](screenshots/Screenshot_IBM_FONT.png)
+
+*TSO/E Logon screen rendered with the IBM 3270 font — notice the characteristic terminal typeface.*
+
+### How to activate
+
+1. Open **X3270 → Preferences** (⌘,)
+2. Check **"Use IBM 3270 font (by Ricardo Bánffy)"**
+3. All open terminal windows switch instantly — no reconnect needed
+
+The setting is saved and restored on every launch.
+
+---
+
 ## Features
 
 | Feature | Details |
@@ -135,6 +153,14 @@ BUILD_NUMBER=42 ./package.sh
 
 ## Version History
 
+### v1.2.0 — 2026-05-23
+
+**IBM 3270 font support**
+- **Bundled IBM 3270 font** — The authentic [3270font](https://github.com/rbanffy/3270font) by **Ricardo Bánffy** is now shipped inside the app bundle (three variants: Regular, SemiCondensed, Condensed).
+- **Optional via Preferences** — A new checkbox in **X3270 → Preferences** ("Use IBM 3270 font") switches the terminal between the default Menlo font and the 3270 font at runtime. The setting persists across app launches.
+- **Live switching** — Changing the preference immediately redraws all open terminal windows and resizes them to match the new cell dimensions.
+- **Attribution** — The 3270font is the work of Ricardo Bánffy and contributors, released under the SIL Open Font License 1.1. See [Acknowledgements](#acknowledgements) below.
+
 ### v1.1.0 — 2026-05-22
 
 **IBM 3279 color rendering**
@@ -192,6 +218,16 @@ BUILD_NUMBER=42 ./package.sh
 
 **Initial public release** — basic TN3270E support, TLS support, ISPF Query Reply support, CoreText rendering, keyboard input, and a simple Connect dialog.
 
+
+---
+
+## Acknowledgements
+
+**IBM 3270 Terminal Font**  
+The optional terminal font bundled with X3270 is [3270font](https://github.com/rbanffy/3270font), designed and maintained by **Ricardo Bánffy** and contributors.  
+It is derived from the classic x3270 bitmap font, redrawn as a modern vector typeface in OTF/TTF format.  
+The font is distributed under the **SIL Open Font License, Version 1.1** — see [LICENSE.txt](https://github.com/rbanffy/3270font/blob/main/LICENSE.txt) in the upstream repository.  
+Many thanks to Ricardo and all contributors to that project for their meticulous work keeping this piece of mainframe history alive.
 
 ---
 

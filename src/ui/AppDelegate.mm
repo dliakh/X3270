@@ -1,5 +1,6 @@
 #import "AppDelegate.h"
 #import "ConnectionWindowController.h"
+#import "PreferencesWindowController.h"
 
 @implementation AppDelegate
 
@@ -73,7 +74,7 @@
 
 - (void)showAbout:(id)sender {
     NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
-    NSString *version  = info[@"CFBundleShortVersionString"] ?: @"1.1.0";
+    NSString *version  = info[@"CFBundleShortVersionString"] ?: @"1.2.0";
     NSString *build    = info[@"CFBundleVersion"]            ?: @"1";
 
     NSString *credits =
@@ -94,7 +95,7 @@
 }
 
 - (void)openPreferences:(id)sender {
-    // TODO: show PreferencesWindowController
+    [[PreferencesWindowController sharedController] showWindow:nil];
 }
 
 @end

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(X3270 VERSION 1.1.0 LANGUAGES CXX OBJCXX)
+project(X3270 VERSION 1.2.0 LANGUAGES CXX OBJCXX)
 
 # ── Version / Build number ────────────────────────────────────────────────────
 # Override on the command line: cmake -DBUILD_NUMBER=42 ..
@@ -68,6 +68,18 @@ target_compile_options(X3270 PRIVATE
     -Wall
     -Wextra
     -Wno-unused-parameter
+)
+
+# ── 3270 font resources ───────────────────────────────────────────────────────
+# Fonts by Ricardo Bánffy (https://github.com/rbanffy/3270font), SIL OFL-1.1
+set(FONT_RESOURCES
+    resources/fonts/3270-Regular.otf
+    resources/fonts/3270SemiCondensed-Regular.otf
+    resources/fonts/3270Condensed-Regular.otf
+)
+target_sources(X3270 PRIVATE ${FONT_RESOURCES})
+set_source_files_properties(${FONT_RESOURCES} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "Resources/fonts"
 )
 
 # ── Compile .mm files as Objective-C++ with ARC ──────────────────────────────

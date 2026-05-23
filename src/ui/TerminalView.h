@@ -3,6 +3,9 @@
 #include "ScreenBuffer.h"
 #include "KeyboardState.h"
 
+/// NSUserDefaults key – BOOL; YES = use bundled IBM 3270 font (by Ricardo Bánffy)
+extern NSString * const kPref3270FontEnabled;
+
 /// TerminalView renders the 3270 screen buffer as a character grid using
 /// Core Text.  It also handles all keyboard input and forwards it to
 /// a KeyboardState instance provided by the owning window controller.

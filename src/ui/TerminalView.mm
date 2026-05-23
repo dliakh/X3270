@@ -4,6 +4,35 @@
 #include "EbcdicCodec.h"
 #include <string>
 
+/// NSUserDefaults key – BOOL; YES = use bundled IBM 3270 font
+NSString * const kPref3270FontEnabled = @"use3270Font";
+
+// ── 3270-font loader (called once) ───────────────────────────────────────────
+// Registers all three weight variants from the app bundle's Resources/fonts/
+// folder with Core Text so they can be loaded by name.
+static void register3270FontsIfNeeded(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSArray<NSString*> *names = @[
+            @"3270-Regular",
+            @"3270SemiCondensed-Regular",
+            @"3270Condensed-Regular",
+        ];
+        NSBundle *bundle = [NSBundle mainBundle];
+        for (NSString *name in names) {
+            NSURL *url = [bundle URLForResource:name
+                                  withExtension:@"otf"
+                                   subdirectory:@"fonts"];
+            if (!url) continue;
+            CFErrorRef err = NULL;
+            CTFontManagerRegisterFontsForURL((__bridge CFURLRef)url,
+                                             kCTFontManagerScopeProcess,
+                                             &err);
+            if (err) { CFRelease(err); }
+        }
+    });
+}
+
 static const int kRows = x3270::ScreenBuffer::ROWS;
 static const int kCols = x3270::ScreenBuffer::COLS;
 // OIA (Operator Information Area) extra rows below the 3270 screen
@@ -43,14 +72,16 @@ static NSColor *colorFor3270Code(uint8_t code) {
         _codec = x3270::EbcdicCodec(x3270::CodePage::CP037);
         _cursorVisible = YES;
 
+        // Register the bundled 3270 font variants with Core Text (once per process)
+        register3270FontsIfNeeded();
+
         // Default 3270 colour palette (matches IBM 3279 standard defaults)
         _foregroundColor  = [NSColor colorWithRed:0.20 green:0.85 blue:0.20 alpha:1.0]; // green (unprotected normal)
         _backgroundColor  = [NSColor colorWithRed:0.0  green:0.0  blue:0.0  alpha:1.0]; // black
         _intensifiedColor = [NSColor colorWithRed:1.00 green:0.33 blue:0.33 alpha:1.0]; // red  (unprotected intensified)
         _cursorColor      = [NSColor colorWithRed:0.20 green:0.85 blue:0.20 alpha:1.0]; // green
-        _terminalFont     = [NSFont fontWithName:@"Menlo" size:14.0]
-                         ?: [NSFont monospacedSystemFontOfSize:14.0 weight:NSFontWeightRegular];
 
+        [self applyFontFromPreferences];
         [self recalcCellSize];
 
         _cursorTimer = [NSTimer scheduledTimerWithTimeInterval:0.6
@@ -58,12 +89,44 @@ static NSColor *colorFor3270Code(uint8_t code) {
                                                       selector:@selector(blinkCursor:)
                                                       userInfo:nil
                                                        repeats:YES];
+
+        // React to preference changes made in the Preferences window
+        [[NSNotificationCenter defaultCenter]
+            addObserver:self
+               selector:@selector(userDefaultsDidChange:)
+                   name:NSUserDefaultsDidChangeNotification
+                 object:nil];
     }
     return self;
 }
 
+// ── Font preference helpers ───────────────────────────────────────────────────
+
+/// Pick the right NSFont based on the current kPref3270FontEnabled user default.
+- (void)applyFontFromPreferences {
+    BOOL use3270 = [[NSUserDefaults standardUserDefaults] boolForKey:kPref3270FontEnabled];
+    if (use3270) {
+        // PostScript name is "3270-Regular" (confirmed from the OTF name table)
+        _terminalFont = [NSFont fontWithName:@"3270-Regular" size:16.0]
+                     ?: [NSFont fontWithName:@"Menlo" size:14.0]
+                     ?: [NSFont monospacedSystemFontOfSize:14.0 weight:NSFontWeightRegular];
+    } else {
+        _terminalFont = [NSFont fontWithName:@"Menlo" size:14.0]
+                     ?: [NSFont monospacedSystemFontOfSize:14.0 weight:NSFontWeightRegular];
+    }
+}
+
+- (void)userDefaultsDidChange:(NSNotification *)note {
+    [self applyFontFromPreferences];
+    [self recalcCellSize];
+    [self setNeedsDisplay:YES];
+    // Resize the window to the new preferred size (cell dimensions may have changed)
+    [self.window setContentSize:[self preferredSize]];
+}
+
 - (void)dealloc {
     [_cursorTimer invalidate];
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
     // ARC handles object release
 }
 
@@ -268,7 +331,7 @@ static NSColor *colorFor3270Code(uint8_t code) {
     static dispatch_once_t vOnce;
     dispatch_once(&vOnce, ^{
         NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
-        NSString *v = info[@"CFBundleShortVersionString"] ?: @"1.1.0";
+        NSString *v = info[@"CFBundleShortVersionString"] ?: @"1.2.0";
         NSString *b = info[@"CFBundleVersion"] ?: @"1";
         versionStr = [NSString stringWithFormat:@"X3270 v%@ build %@  \u2014  \u00a9 2026 Swen Skalski", v, b];
     });
