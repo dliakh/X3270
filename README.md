@@ -63,9 +63,14 @@ The setting is saved and restored on every launch.
 ## Download
 
 Pre-built DMG releases are available on the [**Releases**](https://github.com/el-dockerr/X3270/releases) page.
-Every push to `main` automatically builds and publishes a new DMG via GitHub Actions.
+Every push to `main` automatically builds and publishes **two DMGs** via GitHub Actions — one for each architecture.
 
-1. Download `X3270-<version>.dmg`
+| DMG | For |
+|---|---|
+| `X3270-<version>-build<N>.dmg` | **Apple Silicon** Macs (M1/M2/M3/M4, 2020 and later) |
+| `X3270-<version>-build<N>-Intel.dmg` | **Intel** Macs (2019 and earlier) |
+
+1. Download the DMG that matches your Mac
 2. Open the DMG and drag **X3270.app** to your `/Applications` folder
 3. On first launch: right-click → **Open** (macOS Gatekeeper; the app is unsigned)
 
@@ -114,11 +119,11 @@ The terminal window opens. Type your credentials at the logon screen. ISPF and T
 # Xcode Command Line Tools
 xcode-select --install
 
-# Homebrew + OpenSSL
+# Homebrew + OpenSSL + CMake
 brew install openssl@3 cmake
 ```
 
-### Build
+### Build (Apple Silicon)
 
 ```bash
 git clone https://github.com/el-dockerr/X3270.git
@@ -135,19 +140,47 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_NUMBER=42
 cmake --build build
 ```
 
-### Package a DMG for distribution
+### Package DMGs for distribution
 
+**Apple Silicon only:**
 ```bash
 ./package.sh
-# produces: dist/X3270-1.0.0-build1.dmg
+# produces: dist/X3270-1.3.0-build1.dmg
 ```
 
-Pass an optional build number:
+**Intel only** (cross-compiled from Apple Silicon — see prerequisites below):
+```bash
+./package_intel.sh
+# produces: dist/X3270-1.3.0-build1-Intel.dmg
+```
+
+**Both architectures in one step:**
+```bash
+BUILD_NUMBER=42 ./package_all.sh
+# produces: dist/X3270-1.3.0-build42.dmg
+#           dist/X3270-1.3.0-build42-Intel.dmg
+```
+
+### Cross-compiling for Intel from Apple Silicon
+
+Apple's Clang toolchain supports cross-compilation natively. The only prerequisite
+is an x86_64 OpenSSL library, which lives in the Intel Homebrew at `/usr/local`.
+
+One-time setup:
 
 ```bash
-BUILD_NUMBER=42 ./package.sh
-# produces: dist/X3270-1.0.0-build42.dmg
+# 1. Install Rosetta 2
+softwareupdate --install-rosetta --agree-to-license
+
+# 2. Install the x86_64 Homebrew (runs under Rosetta)
+arch -x86_64 /bin/bash -c \
+  "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# 3. Install x86_64 OpenSSL
+arch -x86_64 /usr/local/bin/brew install openssl@3
 ```
+
+Then run `./package_intel.sh` or `./package_all.sh` as shown above.
 
 ---
 

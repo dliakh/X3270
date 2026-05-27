@@ -5,55 +5,89 @@ on:
     branches: [main]
 
 jobs:
-  release:
-    name: macOS Build → DMG → GitHub Release
-    runs-on: macos-latest
-    permissions:
-      contents: write   # needed to create releases and upload assets
-
+  # ── Read version once (cheap, runs on Linux) ───────────────────────────────
+  version:
+    name: Read Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      build:   ${{ steps.v.outputs.build }}
+      tag:     ${{ steps.v.outputs.tag }}
     steps:
-      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - uses: actions/checkout@v4
+      - name: Extract version
+        id: v
+        run: |
+          VER=$(grep -m1 'project(X3270 VERSION' CMakeLists.txt \
+                | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          echo "version=${VER}"                            >> "$GITHUB_OUTPUT"
+          echo "build=${{ github.run_number }}"            >> "$GITHUB_OUTPUT"
+          echo "tag=v${VER}-build${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+  # ── Build matrix: one job per architecture ─────────────────────────────────
+  build:
+    name: Build (${{ matrix.label }})
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon — native build on arm64 runner
+          - runner: macos-15
+            arch:   arm64
+            suffix: ""
+            label:  "Apple Silicon"
+            vol_suffix: ""
+          # Intel — native build on x86_64 runner
+          - runner: macos-13
+            arch:   x86_64
+            suffix: "-Intel"
+            label:  "Intel"
+            vol_suffix: " (Intel)"
+    runs-on: ${{ matrix.runner }}
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── 2. Dependencies ────────────────────────────────────────────────────
+      # ── 2. Dependencies ──────────────────────────────────────────────────
       - name: Install dependencies (Homebrew)
         run: |
           brew install openssl@3 cmake
           echo "OPENSSL_ROOT=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
-      # ── 3. Read version from CMakeLists.txt ────────────────────────────────
-      - name: Read version
-        id: version
-        run: |
-          VER=$(grep -m1 'project(X3270 VERSION' CMakeLists.txt \
-                | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-          echo "version=${VER}"              >> "$GITHUB_OUTPUT"
-          echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-          echo "tag=v${VER}-build${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-          echo "dmg=dist/X3270-${VER}-build${{ github.run_number }}.dmg" >> "$GITHUB_OUTPUT"
-
-      # ── 4. CMake configure ─────────────────────────────────────────────────
+      # ── 3. CMake configure ───────────────────────────────────────────────
       - name: Configure
         run: |
           cmake -B build_ci \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_NUMBER=${{ github.run_number }} \
-            -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}"
+            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
+            -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
+            -DBUILD_NUMBER=${{ needs.version.outputs.build }}
 
-      # ── 5. Build ───────────────────────────────────────────────────────────
+      # ── 4. Build ─────────────────────────────────────────────────────────
       - name: Build
         run: cmake --build build_ci --config Release --parallel $(sysctl -n hw.logicalcpu)
 
-      # ── 6. Package DMG ─────────────────────────────────────────────────────
+      # ── 5. Verify architecture ───────────────────────────────────────────
+      - name: Verify binary architecture
+        run: |
+          BINARY="build_ci/X3270.app/Contents/MacOS/X3270"
+          BUILT_ARCH=$(lipo -archs "${BINARY}")
+          echo "Binary architecture: ${BUILT_ARCH}"
+          if [[ "${BUILT_ARCH}" != *"${{ matrix.arch }}"* ]]; then
+            echo "ERROR: Expected ${{ matrix.arch }}, got ${BUILT_ARCH}" >&2
+            exit 1
+          fi
+
+      # ── 6. Package DMG ───────────────────────────────────────────────────
       - name: Package DMG
         env:
-          BUILD_NUMBER: ${{ github.run_number }}
+          VERSION:    ${{ needs.version.outputs.version }}
+          BUILD_NUM:  ${{ needs.version.outputs.build }}
         run: |
-          # Override build dir so package.sh finds the right .app
           APP_PATH="$(pwd)/build_ci/X3270.app"
-          VERSION="${{ steps.version.outputs.version }}"
-          DMG_NAME="X3270-${VERSION}-build${BUILD_NUMBER}"
+          DMG_NAME="X3270-${VERSION}-build${BUILD_NUM}${{ matrix.suffix }}"
           STAGING="$(mktemp -d)"
           mkdir -p dist
 
@@ -61,7 +95,7 @@ jobs:
           ln -s /Applications "${STAGING}/Applications"
 
           hdiutil create \
-            -volname "X3270 ${VERSION}" \
+            -volname "X3270 ${VERSION}${{ matrix.vol_suffix }}" \
             -srcfolder "${STAGING}" \
             -ov -format UDRW \
             "dist/${DMG_NAME}-rw.dmg" > /dev/null
@@ -73,31 +107,66 @@ jobs:
             -o "dist/${DMG_NAME}.dmg" > /dev/null
 
           rm -f "dist/${DMG_NAME}-rw.dmg"
-          echo "DMG ready: dist/${DMG_NAME}.dmg"
+          echo "DMG ready:"
           ls -lh dist/
 
-      # ── 7. Create / update GitHub Release ─────────────────────────────────
+      # ── 7. Upload artifact for release job ───────────────────────────────
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.arch }}
+          path: dist/*.dmg
+          retention-days: 1
+
+  # ── Collect both DMGs and publish a single GitHub Release ─────────────────
+  release:
+    name: Publish GitHub Release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # ── 8. Download all DMG artifacts ────────────────────────────────────
+      - name: Download DMG artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dmg-*
+          merge-multiple: true
+          path: dist/
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+      # ── 9. Create / update GitHub Release ────────────────────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: "X3270 v${{ steps.version.outputs.version }} (Build ${{ steps.version.outputs.build }})"
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: "X3270 v${{ needs.version.outputs.version }} (Build ${{ needs.version.outputs.build }})"
           draft: false
           prerelease: false
-          files: ${{ steps.version.outputs.dmg }}
+          files: dist/*.dmg
           body: |
-            ## X3270 v${{ steps.version.outputs.version }} — Build ${{ steps.version.outputs.build }}
+            ## X3270 v${{ needs.version.outputs.version }} — Build ${{ needs.version.outputs.build }}
 
             Free TN3270/TN3270E terminal emulator for macOS.  
             Built from commit ${{ github.sha }} on `main`.
 
+            ### Download the right DMG for your Mac
+
+            | DMG | For |
+            |---|---|
+            | `X3270-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.build }}.dmg` | **Apple Silicon** Macs (M1 / M2 / M3 / M4, 2020 and later) |
+            | `X3270-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.build }}-Intel.dmg` | **Intel** Macs (2019 and earlier) |
+
             ### Install
-            1. Download **X3270-${{ steps.version.outputs.version }}-build${{ steps.version.outputs.build }}.dmg**
+            1. Download the DMG that matches your Mac
             2. Open the DMG and drag **X3270.app** to `/Applications`
             3. First launch: right-click → **Open** (app is unsigned — macOS Gatekeeper)
 
             ### Requirements
-            macOS 12 Monterey or later · Apple Silicon or Intel
+            macOS 12 Monterey or later · Apple Silicon **or** Intel
 
             ---
             *Written by Swen Skalski · https://github.com/el-dockerr/X3270*
