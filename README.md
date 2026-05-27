@@ -58,6 +58,8 @@ The setting is saved and restored on every launch.
 | **Keyboard** | PF1–PF24, PA1–PA3, Clear, Reset, Tab/BackTab, ErEOF, Insert, arrows |
 | **Query Reply** | Responds to IBM Structured Field Read Partition Query (required for ISPF) |
 | **Rendering** | CoreText glyph metrics for pixel-perfect character grid |
+| **Screenshot** | Save the terminal screen as a PNG image (File → Save Screenshot… `⌘⇧P`) |
+| **Text export** | Export the screen content as a formatted UTF-8 text file (File → Export as Text… `⌘⇧T`) |
 | **macOS** | 12 Monterey and later (Apple Silicon + Intel) |
 
 ---
@@ -187,6 +189,16 @@ Then run `./package_intel.sh` or `./package_all.sh` as shown above.
 ---
 
 ## Version History
+
+### v1.5.0 — 2026-05-27
+
+**Screenshot and text export**
+- **Save Screenshot** — File → **Save Screenshot…** (`⌘⇧P`) captures the live terminal view as a pixel-perfect PNG image using `NSBitmapImageRep` and writes it to a user-chosen file. Useful for documenting session output or sharing screen content.
+- **Export as Text** — File → **Export as Text…** (`⌘⇧T`) reads the current screen buffer, decodes every cell from EBCDIC to UTF-8, and saves a fixed-width plain-text file that preserves the exact column layout. Field-attribute positions are written as spaces so column alignment is maintained.
+- Both actions are only enabled when an active session exists (`validateMenuItem:` guard).
+
+**Donation link in Connect dialog**
+- A ♥ **Support this project** link is now shown in the header of the Connect dialog, opening the Stripe donation page in the default browser. (No ads, no tracking, just a simple way to say thanks if you find the app useful. And since this app is not affiliated with IBM, there are no corporate sponsorships or licensing fees to worry about.)
 
 ### v1.3.0 — 2026-05-25
 

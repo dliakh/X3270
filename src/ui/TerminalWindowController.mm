@@ -212,4 +212,84 @@
     [_debugWC.window makeKeyAndOrderFront:nil];
 }
 
+// ── Screenshot ────────────────────────────────────────────────────────────────
+
+/// Save a PNG screenshot of the terminal view to a user-chosen file (⌘⇧P).
+- (IBAction)saveScreenshot:(id)sender {
+    NSSavePanel *panel = [NSSavePanel savePanel];
+    panel.allowedFileTypes = @[@"png"];
+    panel.nameFieldStringValue = @"X3270_screenshot.png";
+    panel.message = @"Save a PNG image of the current terminal screen.";
+
+    [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result) {
+        if (result != NSModalResponseOK) return;
+
+        NSRect bounds = self->_termView.bounds;
+        NSBitmapImageRep *bitmap =
+            [self->_termView bitmapImageRepForCachingDisplayInRect:bounds];
+        if (!bitmap) return;
+        [self->_termView cacheDisplayInRect:bounds toBitmapImageRep:bitmap];
+        NSData *pngData = [bitmap representationUsingType:NSBitmapImageFileTypePNG
+                                               properties:@{}];
+        [pngData writeToURL:panel.URL atomically:YES];
+    }];
+}
+
+// ── Text export ───────────────────────────────────────────────────────────────
+
+/// Export the current terminal screen as UTF-8 plain text (⌘⇧T).
+/// Each row is written as a fixed-width line; columns are preserved by position.
+- (IBAction)exportText:(id)sender {
+    if (!_screen || !_codec) return;
+
+    int rows = _screen->rows();
+    int cols = _screen->cols();
+    NSMutableString *text = [NSMutableString stringWithCapacity:(cols + 1) * rows];
+
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            const x3270::Cell &cell = _screen->at(r, c);
+            // Field-attribute cells and NUL/space bytes → space character
+            if (cell.isFA || cell.ch == 0x00 ||
+                cell.ch == x3270::EbcdicCodec::EBCDIC_SPACE) {
+                [text appendString:@" "];
+                continue;
+            }
+            uint16_t uc = _codec->toUnicode(cell.ch);
+            if (uc >= 0x20) {
+                unichar ch = (unichar)uc;
+                [text appendString:[NSString stringWithCharacters:&ch length:1]];
+            } else {
+                [text appendString:@" "];
+            }
+        }
+        if (r < rows - 1) [text appendString:@"\n"];
+    }
+
+    NSSavePanel *panel = [NSSavePanel savePanel];
+    panel.allowedFileTypes = @[@"txt"];
+    panel.nameFieldStringValue = @"X3270_export.txt";
+    panel.message = @"Export the current terminal screen as plain text.";
+
+    [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result) {
+        if (result != NSModalResponseOK) return;
+        NSError *err = nil;
+        [text writeToURL:panel.URL
+              atomically:YES
+                encoding:NSUTF8StringEncoding
+                   error:&err];
+    }];
+}
+
+// ── Menu validation ───────────────────────────────────────────────────────────
+
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    SEL action = item.action;
+    if (action == @selector(saveScreenshot:) ||
+        action == @selector(exportText:)) {
+        return _session != nullptr;
+    }
+    return YES;
+}
+
 @end

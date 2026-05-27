@@ -18,7 +18,7 @@
 
 - (instancetype)init {
     NSWindow *win = [[NSWindow alloc]
-                     initWithContentRect:NSMakeRect(0, 0, 420, 384)
+                     initWithContentRect:NSMakeRect(0, 0, 420, 410)
                                styleMask:NSWindowStyleMaskTitled
                                         |NSWindowStyleMaskClosable
                                         |NSWindowStyleMaskMiniaturizable
@@ -41,15 +41,15 @@
     CGFloat margin = 20;
     CGFloat hdrW = 380;
     CGFloat labelW = 100, fieldW = 240, rowH = 24, gap = 10;
-    __block CGFloat curY = 254;
+    __block CGFloat curY = 270;
 
     // ── Header: app name, version and author ──────────────────────────────────
-    NSString *version = NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"] ?: @"1.3.0";
+    NSString *version = NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"] ?: @"1.4.0";
 
     NSTextField *appName = [NSTextField labelWithString:@"X3270"];
     appName.font = [NSFont boldSystemFontOfSize:16];
     appName.alignment = NSTextAlignmentCenter;
-    appName.frame = NSMakeRect(margin, 348, hdrW, 24);
+    appName.frame = NSMakeRect(margin, 374, hdrW, 24);
     [cv addSubview:appName];
 
     NSTextField *appSubtitle = [NSTextField labelWithString:
@@ -57,7 +57,7 @@
     appSubtitle.font = [NSFont systemFontOfSize:11];
     appSubtitle.textColor = [NSColor secondaryLabelColor];
     appSubtitle.alignment = NSTextAlignmentCenter;
-    appSubtitle.frame = NSMakeRect(margin, 328, hdrW, 16);
+    appSubtitle.frame = NSMakeRect(margin, 354, hdrW, 16);
     [cv addSubview:appSubtitle];
 
     NSMutableAttributedString *linkTitle = [[NSMutableAttributedString alloc]
@@ -66,7 +66,7 @@
                 NSFontAttributeName: [NSFont systemFontOfSize:11],
                 NSForegroundColorAttributeName: [NSColor linkColor],
             }];
-    NSButton *linkBtn = [[NSButton alloc] initWithFrame:NSMakeRect(margin, 306, hdrW, 18)];
+    NSButton *linkBtn = [[NSButton alloc] initWithFrame:NSMakeRect(margin, 332, hdrW, 18)];
     [linkBtn setAttributedTitle:linkTitle];
     linkBtn.buttonType = NSButtonTypeMomentaryLight;
     linkBtn.bordered = NO;
@@ -75,7 +75,23 @@
     linkBtn.alignment = NSTextAlignmentCenter;
     [cv addSubview:linkBtn];
 
-    NSBox *separator = [[NSBox alloc] initWithFrame:NSMakeRect(margin, 292, hdrW, 1)];
+    // Donation link
+    NSMutableAttributedString *donateTitle = [[NSMutableAttributedString alloc]
+        initWithString:@"\u2665  Support this project — Buy me a coffee"
+            attributes:@{
+                NSFontAttributeName: [NSFont systemFontOfSize:11],
+                NSForegroundColorAttributeName: [NSColor systemPinkColor],
+            }];
+    NSButton *donateBtn = [[NSButton alloc] initWithFrame:NSMakeRect(margin, 312, hdrW, 16)];
+    [donateBtn setAttributedTitle:donateTitle];
+    donateBtn.buttonType = NSButtonTypeMomentaryLight;
+    donateBtn.bordered = NO;
+    donateBtn.target = self;
+    donateBtn.action = @selector(openDonation:);
+    donateBtn.alignment = NSTextAlignmentCenter;
+    [cv addSubview:donateBtn];
+
+    NSBox *separator = [[NSBox alloc] initWithFrame:NSMakeRect(margin, 298, hdrW, 1)];
     separator.boxType = NSBoxSeparator;
     [cv addSubview:separator];
 
@@ -155,6 +171,11 @@
 - (void)openGitHub:(id)sender {
     [[NSWorkspace sharedWorkspace] openURL:
         [NSURL URLWithString:@"https://github.com/el-dockerr/X3270"]];
+}
+
+- (void)openDonation:(id)sender {
+    [[NSWorkspace sharedWorkspace] openURL:
+        [NSURL URLWithString:@"https://buy.stripe.com/7sY9AT3VMfKi53942m3VC05"]];
 }
 
 - (void)sslToggled:(id)sender {

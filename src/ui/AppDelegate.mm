@@ -46,6 +46,17 @@
     [fileMenu addItemWithTitle:@"New Connection…"
                         action:@selector(newConnection:)
                  keyEquivalent:@"n"];
+    [fileMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *screenshotItem =
+        [fileMenu addItemWithTitle:@"Save Screenshot…"
+                            action:@selector(saveScreenshot:)
+                     keyEquivalent:@"P"];   // ⌘⇧P (uppercase = Shift included)
+    screenshotItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    NSMenuItem *exportItem =
+        [fileMenu addItemWithTitle:@"Export as Text…"
+                            action:@selector(exportText:)
+                     keyEquivalent:@"T"];   // ⌘⇧T
+    exportItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
 
     // Edit menu (for copy/paste system integration)
     NSMenuItem *editMenuItem = [[NSMenuItem alloc] init];
@@ -74,7 +85,7 @@
 
 - (void)showAbout:(id)sender {
     NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
-    NSString *version  = info[@"CFBundleShortVersionString"] ?: @"1.3.0";
+    NSString *version  = info[@"CFBundleShortVersionString"] ?: @"1.4.0";
     NSString *build    = info[@"CFBundleVersion"]            ?: @"1";
 
     NSString *credits =

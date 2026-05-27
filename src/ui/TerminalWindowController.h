@@ -18,4 +18,10 @@
 @property (nonatomic, copy) void(^onConnected)(void);
 @property (nonatomic, copy) void(^onConnectError)(NSString*);
 
+/// Save a PNG screenshot of the terminal window to disk.
+- (IBAction)saveScreenshot:(id)sender;
+
+/// Export the current screen content as a UTF-8 plain-text file.
+- (IBAction)exportText:(id)sender;
+
 @end
