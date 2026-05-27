@@ -159,11 +159,18 @@ jobs:
       - name: List artifacts
         run: ls -lh dist/
 
-      # ── 9. Create / update GitHub Release ────────────────────────────────
+      # ── 9. Delete old 'latest' release so stale assets don't accumulate ──
+      # Without this, build1 DMGs would sit alongside build10 DMGs forever.
+      - name: Delete existing latest release
+        run: gh release delete latest --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 10. Publish a fresh 'latest' release with both current DMGs ───────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.version.outputs.tag }}
+          tag_name: latest
           name: "X3270 v${{ needs.version.outputs.version }} (Build ${{ needs.version.outputs.build }})"
           draft: false
           prerelease: false
