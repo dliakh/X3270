@@ -190,7 +190,7 @@ Then run `./package_intel.sh` or `./package_all.sh` as shown above.
 
 ## Version History
 
-### v1.5.0 — 2026-05-27
+### v1.4.0 — 2026-05-27
 
 **Screenshot and text export**
 - **Save Screenshot** — File → **Save Screenshot…** (`⌘⇧P`) captures the live terminal view as a pixel-perfect PNG image using `NSBitmapImageRep` and writes it to a user-chosen file. Useful for documenting session output or sharing screen content.
