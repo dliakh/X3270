@@ -1,182 +1,60 @@
-name: Build & Release DMG
+name: Release DMG
 
 on:
   push:
     branches: [main]
 
 jobs:
-  # ── Read version once (cheap, runs on Linux) ───────────────────────────────
-  version:
-    name: Read Version
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.v.outputs.version }}
-      build:   ${{ steps.v.outputs.build }}
-      tag:     ${{ steps.v.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Extract version
-        id: v
-        run: |
-          VER=$(grep -m1 'project(X3270 VERSION' CMakeLists.txt \
-                | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-          echo "version=${VER}"                            >> "$GITHUB_OUTPUT"
-          echo "build=${{ github.run_number }}"            >> "$GITHUB_OUTPUT"
-          echo "tag=v${VER}-build${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-
-  # ── Single Apple Silicon runner — arm64 native + x86_64 cross-compile ────────
-  # Using macos-13 (Intel runner) caused long queue waits (10–20 min).
-  # Instead we build both architectures on one macos-15 runner:
-  #   • arm64  — native Homebrew OpenSSL
-  #   • x86_64 — OpenSSL cross-compiled from source, CMAKE_OSX_ARCHITECTURES
-  build:
-    name: Build arm64 + x86_64
-    needs: version
-    runs-on: macos-15
-    steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # ── 2. Native (arm64) dependencies ───────────────────────────────────
-      - name: Install arm64 dependencies
-        run: |
-          brew install cmake openssl@3
-          echo "ARM64_OPENSSL=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
-
-      # ── 3. Build x86_64 OpenSSL from source (cross-compile) ──────────────
-      # We can't use the arm64 Homebrew bottles for x86_64 linking, so we
-      # compile OpenSSL from the same upstream source, targeting x86_64.
-      - name: Build x86_64 OpenSSL from source
-        run: |
-          OPENSSL_VER=$(brew list --versions openssl@3 | awk '{print $2}')
-          echo "Cross-compiling OpenSSL ${OPENSSL_VER} for x86_64..."
-          INSTDIR="/tmp/openssl-x86_64"
-
-          curl -fsSL "https://www.openssl.org/source/openssl-${OPENSSL_VER}.tar.gz" \
-            | tar xz -C /tmp
-
-          cd "/tmp/openssl-${OPENSSL_VER}"
-          ./Configure darwin64-x86_64-cc no-shared no-tests \
-            CC=clang \
-            CFLAGS="-arch x86_64 -mmacosx-version-min=12.0" \
-            LDFLAGS="-arch x86_64 -mmacosx-version-min=12.0" \
-            --prefix="${INSTDIR}"
-          make -j$(sysctl -n hw.logicalcpu) build_sw 2>&1 | tail -5
-          make install_sw
-
-          echo "X86_64_OPENSSL=${INSTDIR}" >> "$GITHUB_ENV"
-
-      # ── 4. Configure + build (arm64) ──────────────────────────────────────
-      - name: Configure (arm64)
-        run: |
-          cmake -B build_arm64 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DOPENSSL_ROOT_DIR="${ARM64_OPENSSL}" \
-            -DBUILD_NUMBER=${{ needs.version.outputs.build }}
-
-      - name: Build (arm64)
-        run: cmake --build build_arm64 --config Release --parallel $(sysctl -n hw.logicalcpu)
-
-      # ── 5. Configure + build (x86_64) ─────────────────────────────────────
-      - name: Configure (x86_64)
-        run: |
-          cmake -B build_x86_64 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-            -DOPENSSL_ROOT_DIR="${X86_64_OPENSSL}" \
-            -DBUILD_NUMBER=${{ needs.version.outputs.build }}
-
-      - name: Build (x86_64)
-        run: cmake --build build_x86_64 --config Release --parallel $(sysctl -n hw.logicalcpu)
-
-      # ── 6. Package both DMGs ──────────────────────────────────────────────
-      - name: Package DMGs
-        env:
-          VERSION:   ${{ needs.version.outputs.version }}
-          BUILD_NUM: ${{ needs.version.outputs.build }}
-        run: |
-          mkdir -p dist
-
-          package_dmg() {
-            local BUILD_DIR="$1" SUFFIX="$2" VOL_SUFFIX="$3"
-            local DMG_NAME="X3270-${VERSION}-build${BUILD_NUM}${SUFFIX}"
-            local STAGING
-            STAGING="$(mktemp -d)"
-
-            echo "Packaging ${DMG_NAME}..."
-            echo "  Architecture: $(lipo -archs "${BUILD_DIR}/X3270.app/Contents/MacOS/X3270")"
-
-            cp -R "${BUILD_DIR}/X3270.app" "${STAGING}/X3270.app"
-            ln -s /Applications "${STAGING}/Applications"
-
-            hdiutil create \
-              -volname "X3270 ${VERSION}${VOL_SUFFIX}" \
-              -srcfolder "${STAGING}" \
-              -ov -format UDRW \
-              "dist/${DMG_NAME}-rw.dmg" > /dev/null
-
-            hdiutil convert \
-              "dist/${DMG_NAME}-rw.dmg" \
-              -format UDZO -imagekey zlib-level=9 \
-              -ov \
-              -o "dist/${DMG_NAME}.dmg" > /dev/null
-
-            rm -f "dist/${DMG_NAME}-rw.dmg"
-            rm -rf "${STAGING}"
-          }
-
-          package_dmg "build_arm64"  ""        ""
-          package_dmg "build_x86_64" "-Intel"  " (Intel)"
-
-          ls -lh dist/
-
-      # ── 7. Upload both DMGs as one artifact ───────────────────────────────
-      - name: Upload DMG artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dmgs
-          path: dist/*.dmg
-          retention-days: 1
-
-  # ── Publish GitHub Release ────────────────────────────────────────────────
+  # ── Publish pre-built DMGs from dist/ to a single 'latest' GitHub Release ──
+  # Build locally with ./package_all.sh, commit dist/, then push.
+  # CI never compiles — it just reads the version and publishes.
   release:
     name: Publish GitHub Release
-    needs: [version, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      # ── 8. Download DMG artifacts ─────────────────────────────────────────
-      - name: Download DMG artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: dmgs
-          path: dist/
+      # ── 1. Checkout (brings in dist/*.dmg committed by the developer) ─────
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: List artifacts
-        run: ls -lh dist/
+      # ── 2. Read version from CMakeLists.txt ───────────────────────────────
+      - name: Read version
+        id: version
+        run: |
+          VER=$(grep -m1 'project(X3270 VERSION' CMakeLists.txt \
+                | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
 
-      # ── 9. Delete old 'latest' release so stale assets don't accumulate ──
-      # Without this, build1 DMGs would sit alongside build10 DMGs forever.
+      # ── 3. Verify the DMGs are actually present ───────────────────────────
+      - name: Verify DMGs
+        run: |
+          if ! ls dist/*.dmg 1>/dev/null 2>&1; then
+            echo "ERROR: No DMGs found in dist/." >&2
+            echo "Run ./package_all.sh locally and commit the dist/ folder before pushing." >&2
+            exit 1
+          fi
+          echo "Found DMGs:"
+          ls -lh dist/*.dmg
+
+      # ── 4. Delete old 'latest' release so stale assets don't accumulate ──
       - name: Delete existing latest release
         run: gh release delete latest --yes --cleanup-tag || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── 10. Publish a fresh 'latest' release with both current DMGs ───────
+      # ── 5. Publish a fresh 'latest' release with the committed DMGs ───────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "X3270 v${{ needs.version.outputs.version }} (Build ${{ needs.version.outputs.build }})"
+          name: "X3270 v${{ steps.version.outputs.version }}"
           draft: false
           prerelease: false
           files: dist/*.dmg
           body: |
-            ## X3270 v${{ needs.version.outputs.version }} — Build ${{ needs.version.outputs.build }}
+            ## X3270 v${{ steps.version.outputs.version }}
 
             Free TN3270/TN3270E terminal emulator for macOS.  
             Built from commit ${{ github.sha }} on `main`.
@@ -185,8 +63,8 @@ jobs:
 
             | DMG | For |
             |---|---|
-            | `X3270-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.build }}.dmg` | **Apple Silicon** Macs (M1 / M2 / M3 / M4, 2020 and later) |
-            | `X3270-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.build }}-Intel.dmg` | **Intel** Macs (2019 and earlier) |
+            | `X3270-${{ steps.version.outputs.version }}.dmg` | **Apple Silicon** Macs (M1 / M2 / M3 / M4, 2020 and later) |
+            | `X3270-${{ steps.version.outputs.version }}-Intel.dmg` | **Intel** Macs (2019 and earlier) |
 
             ### Install
             1. Download the DMG that matches your Mac
