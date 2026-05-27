@@ -4,6 +4,8 @@ A native macOS (ARM - Apple Silicon + Intel) TN3270/TN3270E terminal emulator fo
 Built entirely in C++ and Objective-C++ on top of native Cocoa, CoreText and OpenSSL.  
 **No license fee. No Java. No X11.**
 
+[![Support this project](https://img.shields.io/badge/Support%20this%20project-♥-pink?style=for-the-badge)](https://buy.stripe.com/7sY9AT3VMfKi53942m3VC05)
+
 ---
 
 ## Why this exists
