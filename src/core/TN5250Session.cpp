@@ -1,0 +1,333 @@
+#include "TN5250Session.h"
+#include <cstring>
+
+namespace x3270 {
+
+// ── Terminal type strings ─────────────────────────────────────────────────────
+// IBM-3477-FC: 24×80 colour display (most compatible with AS/400 Telnet server)
+// IBM-3477-FC-2: 27×132 colour display
+const char* TN5250Session::terminalTypeName() const {
+    switch (model_) {
+    case TerminalModel::Model5:
+    case TerminalModel::LargeCustom:
+        return "IBM-3477-FC-2";   // 27×132
+    default:
+        return "IBM-3477-FC";     // 24×80
+    }
+}
+
+// ── Lifecycle ─────────────────────────────────────────────────────────────────
+TN5250Session::TN5250Session()  = default;
+TN5250Session::~TN5250Session() { disconnect(); }
+
+bool TN5250Session::connect(const std::string& host, uint16_t port,
+                             bool useTLS, const std::string& caBundle) {
+    state_ = State::Connecting;
+
+    std::string errMsg;
+    if (!transport_.connect(host, port, useTLS, caBundle, errMsg)) {
+        state_ = State::Disconnected;
+        if (errorCb_) errorCb_(errMsg);
+        return false;
+    }
+    state_ = State::NegotiatingTelnet;
+
+    // Reset negotiation state
+    willBinary_ = doBinary_ = willEOR_ = doEOR_ = doTermType_ = false;
+    sentWillBinary_ = sentDoBinary_ = sentWillEOR_ = sentDoEOR_ =
+    sentWillTermType_ = sentTerminalTypeIs_ = sentWillSGA_ = sentDoSGA_ = false;
+    currentRecord_.clear();
+    subnegBuf_.clear();
+
+    // RFC 2877: offer BINARY + EOR + TERMINAL-TYPE proactively.
+    // RFC 858/2877 SHOULD: also negotiate SUPPRESS-GO-AHEAD so the server does
+    // NOT enter half-duplex mode (where it waits for a Go-Ahead before sending).
+    sendWill(TN5250_OPT_BINARY);        sentWillBinary_   = true;
+    sendDo(TN5250_OPT_BINARY);          sentDoBinary_     = true;
+    sendWill(TN5250_OPT_EOR);           sentWillEOR_      = true;
+    sendDo(TN5250_OPT_EOR);             sentDoEOR_        = true;
+    sendWill(TN5250_OPT_TERMINAL_TYPE); sentWillTermType_ = true;
+    sendWill(TN5250_OPT_SGA);           sentWillSGA_      = true;
+    sendDo(TN5250_OPT_SGA);             sentDoSGA_        = true;
+
+    return true;
+}
+
+void TN5250Session::disconnect() {
+    state_ = State::Disconnected;
+    transport_.disconnect();
+}
+
+// ── Send path ─────────────────────────────────────────────────────────────────
+bool TN5250Session::sendRecord(const std::vector<uint8_t>& record) {
+    if (state_ != State::Connected) return false;
+
+    // Build GDS wrapper: [len_hi][len_lo][0x00][0x00][0x00][0x00][data...]
+    // Client→host records use type 0x00 (response direction).
+    uint16_t totalLen = static_cast<uint16_t>(GDS_HEADER_LENGTH + record.size());
+    std::vector<uint8_t> gds;
+    gds.reserve(totalLen);
+    gds.push_back(static_cast<uint8_t>(totalLen >> 8));
+    gds.push_back(static_cast<uint8_t>(totalLen & 0xFF));
+    gds.push_back(0x00); // type: client→host
+    gds.push_back(0x00);
+    gds.push_back(0x00);
+    gds.push_back(0x00);
+    gds.insert(gds.end(), record.begin(), record.end());
+
+    auto escaped = escapeRecord(gds);
+    if (trafficCb_) trafficCb_(true, escaped);
+    return transport_.send(escaped);
+}
+
+bool TN5250Session::sendATTN() {
+    if (!transport_.isConnected()) return false;
+    sendRaw({ TN5250_IAC, TN5250_IP });
+    return true;
+}
+
+// ── Read loop ─────────────────────────────────────────────────────────────────
+void TN5250Session::readLoop() {
+    uint8_t buf[4096];
+    while (transport_.isConnected()) {
+        int n = transport_.recv(buf, sizeof(buf));
+        if (n <= 0) break;
+        if (trafficCb_) trafficCb_(false, { buf, buf + n });
+        for (int i = 0; i < n; ++i) {
+            processByte(buf[i]);
+        }
+    }
+    state_ = State::Disconnected;
+    if (errorCb_) errorCb_("Connection closed");
+}
+
+// ── Telnet IAC finite state machine ──────────────────────────────────────────
+void TN5250Session::processByte(uint8_t byte) {
+    switch (telnetState_) {
+    case TelnetState::Normal:
+        if (byte == TN5250_IAC) {
+            telnetState_ = TelnetState::IacSeen;
+        } else {
+            currentRecord_.push_back(byte);
+            tryDispatchGdsRecord();
+        }
+        break;
+
+    case TelnetState::IacSeen:
+        switch (byte) {
+        case TN5250_IAC:
+            currentRecord_.push_back(0xFF);
+            telnetState_ = TelnetState::Normal;
+            break;
+        case TN5250_EOR:
+            if (!currentRecord_.empty()) {
+                if (dataCb_) dataCb_(currentRecord_);
+                currentRecord_.clear();
+            }
+            telnetState_ = TelnetState::Normal;
+            break;
+        case TN5250_WILL: telnetState_ = TelnetState::Will; break;
+        case TN5250_WONT: telnetState_ = TelnetState::Wont; break;
+        case TN5250_DO:   telnetState_ = TelnetState::Do;   break;
+        case TN5250_DONT: telnetState_ = TelnetState::Dont; break;
+        case TN5250_SB:
+            subnegBuf_.clear();
+            telnetState_ = TelnetState::Sb;
+            break;
+        case TN5250_NOP:
+            telnetState_ = TelnetState::Normal;
+            break;
+        default:
+            telnetState_ = TelnetState::Normal;
+            break;
+        }
+        break;
+
+    case TelnetState::Will:
+        processIacCommand(TN5250_WILL, byte);
+        telnetState_ = TelnetState::Normal;
+        break;
+    case TelnetState::Wont:
+        processIacCommand(TN5250_WONT, byte);
+        telnetState_ = TelnetState::Normal;
+        break;
+    case TelnetState::Do:
+        processIacCommand(TN5250_DO, byte);
+        telnetState_ = TelnetState::Normal;
+        break;
+    case TelnetState::Dont:
+        processIacCommand(TN5250_DONT, byte);
+        telnetState_ = TelnetState::Normal;
+        break;
+
+    case TelnetState::Sb:
+        if (byte == TN5250_IAC) {
+            telnetState_ = TelnetState::SbIac;
+        } else {
+            subnegBuf_.push_back(byte);
+        }
+        break;
+    case TelnetState::SbIac:
+        if (byte == TN5250_SE) {
+            processSubneg(subnegBuf_);
+            subnegBuf_.clear();
+            telnetState_ = TelnetState::Normal;
+        } else if (byte == TN5250_IAC) {
+            subnegBuf_.push_back(TN5250_IAC);
+            telnetState_ = TelnetState::Sb;
+        } else {
+            telnetState_ = TelnetState::Sb;
+        }
+        break;
+    }
+}
+
+// ── IAC option commands ───────────────────────────────────────────────────────
+void TN5250Session::processIacCommand(uint8_t cmd, uint8_t opt) {
+    switch (opt) {
+    case TN5250_OPT_BINARY:
+        if (cmd == TN5250_DO) {
+            doBinary_ = true;
+            if (!sentWillBinary_) { sentWillBinary_ = true; sendWill(TN5250_OPT_BINARY); }
+        } else if (cmd == TN5250_WILL) {
+            willBinary_ = true;
+            if (!sentDoBinary_) { sentDoBinary_ = true; sendDo(TN5250_OPT_BINARY); }
+        } else if (cmd == TN5250_DONT) { doBinary_   = false; }
+        else if (cmd == TN5250_WONT)   { willBinary_ = false; }
+        break;
+
+    case TN5250_OPT_EOR:
+        if (cmd == TN5250_DO) {
+            doEOR_ = true;
+            if (!sentWillEOR_) { sentWillEOR_ = true; sendWill(TN5250_OPT_EOR); }
+        } else if (cmd == TN5250_WILL) {
+            willEOR_ = true;
+            if (!sentDoEOR_) { sentDoEOR_ = true; sendDo(TN5250_OPT_EOR); }
+        } else if (cmd == TN5250_DONT) { doEOR_  = false; }
+        else if (cmd == TN5250_WONT)   { willEOR_ = false; }
+        break;
+
+    case TN5250_OPT_TERMINAL_TYPE:
+        if (cmd == TN5250_DO) {
+            doTermType_ = true;
+            if (!sentWillTermType_) { sentWillTermType_ = true; sendWill(TN5250_OPT_TERMINAL_TYPE); }
+        }
+        break;
+
+    case TN5250_OPT_SGA:
+        // RFC 2877 SHOULD: suppress go-ahead on both sides for full-duplex binary mode.
+        // Responding DONT to WILL SGA would put the server in half-duplex mode,
+        // causing it to wait for a Go-Ahead token before transmitting — leaving
+        // the session silent. Respond DO/WILL to keep the channel full-duplex.
+        if (cmd == TN5250_DO) {
+            if (!sentWillSGA_) { sentWillSGA_ = true; sendWill(TN5250_OPT_SGA); }
+        } else if (cmd == TN5250_WILL) {
+            if (!sentDoSGA_)   { sentDoSGA_   = true; sendDo(TN5250_OPT_SGA);   }
+        }
+        break;
+
+    default:
+        if (cmd == TN5250_DO)   sendWont(opt);
+        if (cmd == TN5250_WILL) sendDont(opt);
+        break;
+    }
+
+    tryEnterDataMode();
+}
+
+// ── Sub-negotiation ───────────────────────────────────────────────────────────
+void TN5250Session::processSubneg(const std::vector<uint8_t>& sb) {
+    if (sb.size() < 2) return;
+    if (sb[0] == TN5250_OPT_TERMINAL_TYPE && sb[1] == 0x01 /* SEND */) {
+        doTermType_ = true;
+        sendTerminalType();
+        tryEnterDataMode();
+    }
+}
+
+void TN5250Session::sendTerminalType() {
+    const char* term = terminalTypeName();
+    std::vector<uint8_t> payload = { TN5250_OPT_TERMINAL_TYPE, 0x00 /* IS */ };
+    for (const char* p = term; *p; ++p)
+        payload.push_back(static_cast<uint8_t>(*p));
+    sendSb(payload);
+    sentTerminalTypeIs_ = true;   // gate: some servers never send DO BINARY/EOR explicitly
+}
+
+void TN5250Session::tryEnterDataMode() {
+    if (state_ == State::Connected) return;
+    // Path 1: strict RFC 2877 — server explicitly confirmed BINARY + EOR + queried terminal type
+    // Path 2: relaxed — server sent SB TERMINAL-TYPE SEND and we replied with IS;
+    //          some IBM i servers omit explicit DO BINARY / DO EOR confirmations.
+    if ((doBinary_ && doEOR_ && doTermType_) || sentTerminalTypeIs_)
+        enterDataMode();
+}
+
+void TN5250Session::enterDataMode() {
+    if (state_ == State::Connected) return;
+    state_ = State::Connected;
+    if (connectedCb_) connectedCb_();
+}
+
+// ── GDS length-based record dispatch ─────────────────────────────────────────
+// Some IBM i Telnet servers never negotiate IAC EOR and instead frame 5250
+// records using the 2-byte length field in the GDS header.  This method
+// dispatches any complete GDS records that have accumulated in currentRecord_,
+// so that the data callback fires even without an IAC EOR terminator.
+// When EOR *is* negotiated the EOR handler drains the buffer first; this
+// becomes a safe no-op (currentRecord_ is empty when IAC EOR fires).
+void TN5250Session::tryDispatchGdsRecord() {
+    while (currentRecord_.size() >= GDS_HEADER_LENGTH) {
+        // Validate GDS magic at bytes 2-3
+        if (currentRecord_[2] != GDS_RECORD_TYPE || currentRecord_[3] != 0x00)
+            break;
+        uint16_t recLen = (static_cast<uint16_t>(currentRecord_[0]) << 8)
+                        |  static_cast<uint16_t>(currentRecord_[1]);
+        if (recLen < GDS_HEADER_LENGTH || currentRecord_.size() < recLen)
+            break;
+        std::vector<uint8_t> record(currentRecord_.begin(),
+                                    currentRecord_.begin() + recLen);
+        currentRecord_.erase(currentRecord_.begin(),
+                             currentRecord_.begin() + recLen);
+        if (dataCb_) dataCb_(record);
+    }
+}
+
+// ── Wire helpers ──────────────────────────────────────────────────────────────
+void TN5250Session::sendWill(uint8_t opt) { sendRaw({ TN5250_IAC, TN5250_WILL, opt }); }
+void TN5250Session::sendWont(uint8_t opt) { sendRaw({ TN5250_IAC, TN5250_WONT, opt }); }
+void TN5250Session::sendDo  (uint8_t opt) { sendRaw({ TN5250_IAC, TN5250_DO,   opt }); }
+void TN5250Session::sendDont(uint8_t opt) { sendRaw({ TN5250_IAC, TN5250_DONT, opt }); }
+
+void TN5250Session::sendSb(const std::vector<uint8_t>& payload) {
+    std::vector<uint8_t> msg;
+    msg.reserve(payload.size() + 4);
+    msg.push_back(TN5250_IAC);
+    msg.push_back(TN5250_SB);
+    for (uint8_t b : payload) {
+        if (b == TN5250_IAC) msg.push_back(TN5250_IAC);
+        msg.push_back(b);
+    }
+    msg.push_back(TN5250_IAC);
+    msg.push_back(TN5250_SE);
+    sendRaw(msg);
+}
+
+void TN5250Session::sendRaw(const std::vector<uint8_t>& data) {
+    if (trafficCb_) trafficCb_(true, data);
+    transport_.send(data);
+}
+
+std::vector<uint8_t> TN5250Session::escapeRecord(const std::vector<uint8_t>& raw) {
+    std::vector<uint8_t> out;
+    out.reserve(raw.size() + 4);
+    for (uint8_t b : raw) {
+        out.push_back(b);
+        if (b == TN5250_IAC) out.push_back(TN5250_IAC);
+    }
+    out.push_back(TN5250_IAC);
+    out.push_back(TN5250_EOR);
+    return out;
+}
+
+} // namespace x3270

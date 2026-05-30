@@ -2,21 +2,26 @@
 #import <AppKit/AppKit.h>
 #include "ScreenBuffer.h"
 #include "KeyboardState.h"
+#include "KeyboardState5250.h"
 #include "GraphicsBuffer.h"
 
 /// NSUserDefaults key – BOOL; YES = use bundled IBM 3270 font (by Ricardo Bánffy)
 extern NSString * const kPref3270FontEnabled;
 
-/// TerminalView renders the 3270 screen buffer as a character grid using
+/// TerminalView renders the 3270/5250 screen buffer as a character grid using
 /// Core Text.  It also handles all keyboard input and forwards it to
-/// a KeyboardState instance provided by the owning window controller.
+/// whichever keyboard state (TN3270 or TN5250) is active.
 @interface TerminalView : NSView
 
-/// Wire up the model objects from TerminalWindowController.
+/// Wire up a TN3270 engine (sets 3270 keyboard state).
 - (void)setScreenBuffer:(x3270::ScreenBuffer*)screen
           keyboardState:(x3270::KeyboardState*)kbd;
 
-/// Wire up the GOCA graphics buffer (call after setScreenBuffer:).
+/// Wire up a TN5250 engine (sets 5250 keyboard state; no graphics buffer needed).
+- (void)setScreenBuffer:(x3270::ScreenBuffer*)screen
+      keyboardState5250:(x3270::KeyboardState5250*)kbd;
+
+/// Wire up the GOCA graphics buffer (call after setScreenBuffer:keyboardState:).
 - (void)setGraphicsBuffer:(x3270::GraphicsBuffer*)graphics;
 
 /// Call this (on main thread) whenever the screen buffer has changed.

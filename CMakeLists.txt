@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(DX3270 VERSION 1.6.0 LANGUAGES CXX OBJCXX)
+project(DX3270 VERSION 1.7.0 LANGUAGES CXX OBJCXX)
 
 # ── Version / Build number ────────────────────────────────────────────────────
 # Override on the command line: cmake -DBUILD_NUMBER=42 ..
@@ -18,10 +18,13 @@ find_package(OpenSSL REQUIRED)
 set(CORE_SOURCES
     src/core/TLSTransport.cpp
     src/core/TN3270Session.cpp
+    src/core/TN5250Session.cpp
     src/core/EbcdicCodec.cpp
     src/core/ScreenBuffer.cpp
     src/core/DataStreamParser.cpp
+    src/core/DataStream5250Parser.cpp
     src/core/KeyboardState.cpp
+    src/core/KeyboardState5250.cpp
     src/core/GraphicsBuffer.cpp
     src/core/GocaParser.cpp
 )

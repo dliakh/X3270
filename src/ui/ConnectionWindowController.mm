@@ -1,6 +1,7 @@
 #import "ConnectionWindowController.h"
 #import "TerminalWindowController.h"
 #include "TerminalModel.h"
+#include "TerminalProtocol.h"
 
 @implementation ConnectionWindowController {
     NSComboBox     *_hostCombo;
@@ -9,6 +10,7 @@
     NSTextField    *_caField;
     NSPopUpButton  *_codePagePopup;
     NSPopUpButton  *_modelPopup;
+    NSPopUpButton  *_protocolPopup;
     NSButton       *_connectButton;
     NSTextField    *_statusLabel;
 
@@ -18,7 +20,7 @@
 
 - (instancetype)init {
     NSWindow *win = [[NSWindow alloc]
-                     initWithContentRect:NSMakeRect(0, 0, 420, 410)
+                     initWithContentRect:NSMakeRect(0, 0, 420, 444)
                                styleMask:NSWindowStyleMaskTitled
                                         |NSWindowStyleMaskClosable
                                         |NSWindowStyleMaskMiniaturizable
@@ -41,23 +43,23 @@
     CGFloat margin = 20;
     CGFloat hdrW = 380;
     CGFloat labelW = 100, fieldW = 240, rowH = 24, gap = 10;
-    __block CGFloat curY = 270;
+    __block CGFloat curY = 304;
 
     // ── Header: app name, version and author ──────────────────────────────────
-    NSString *version = NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"] ?: @"1.6.0";
+    NSString *version = NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"] ?: @"1.7.0";
 
     NSTextField *appName = [NSTextField labelWithString:@"DX3270"];
     appName.font = [NSFont boldSystemFontOfSize:16];
     appName.alignment = NSTextAlignmentCenter;
-    appName.frame = NSMakeRect(margin, 374, hdrW, 24);
+    appName.frame = NSMakeRect(margin, 408, hdrW, 24);
     [cv addSubview:appName];
 
     NSTextField *appSubtitle = [NSTextField labelWithString:
-        [NSString stringWithFormat:@"TN3270 Terminal Emulator  \u2013  v%@", version]];
+        [NSString stringWithFormat:@"TN3270 / 5250 Terminal Emulator  \u2013  v%@", version]];
     appSubtitle.font = [NSFont systemFontOfSize:11];
     appSubtitle.textColor = [NSColor secondaryLabelColor];
     appSubtitle.alignment = NSTextAlignmentCenter;
-    appSubtitle.frame = NSMakeRect(margin, 354, hdrW, 16);
+    appSubtitle.frame = NSMakeRect(margin, 388, hdrW, 16);
     [cv addSubview:appSubtitle];
 
     NSMutableAttributedString *linkTitle = [[NSMutableAttributedString alloc]
@@ -66,7 +68,7 @@
                 NSFontAttributeName: [NSFont systemFontOfSize:11],
                 NSForegroundColorAttributeName: [NSColor linkColor],
             }];
-    NSButton *linkBtn = [[NSButton alloc] initWithFrame:NSMakeRect(margin, 332, hdrW, 18)];
+    NSButton *linkBtn = [[NSButton alloc] initWithFrame:NSMakeRect(margin, 366, hdrW, 18)];
     [linkBtn setAttributedTitle:linkTitle];
     linkBtn.buttonType = NSButtonTypeMomentaryLight;
     linkBtn.bordered = NO;
@@ -82,7 +84,7 @@
                 NSFontAttributeName: [NSFont systemFontOfSize:11],
                 NSForegroundColorAttributeName: [NSColor systemPinkColor],
             }];
-    NSButton *donateBtn = [[NSButton alloc] initWithFrame:NSMakeRect(margin, 312, hdrW, 16)];
+    NSButton *donateBtn = [[NSButton alloc] initWithFrame:NSMakeRect(margin, 346, hdrW, 16)];
     [donateBtn setAttributedTitle:donateTitle];
     donateBtn.buttonType = NSButtonTypeMomentaryLight;
     donateBtn.bordered = NO;
@@ -91,7 +93,7 @@
     donateBtn.alignment = NSTextAlignmentCenter;
     [cv addSubview:donateBtn];
 
-    NSBox *separator = [[NSBox alloc] initWithFrame:NSMakeRect(margin, 298, hdrW, 1)];
+    NSBox *separator = [[NSBox alloc] initWithFrame:NSMakeRect(margin, 332, hdrW, 1)];
     separator.boxType = NSBoxSeparator;
     [cv addSubview:separator];
 
@@ -106,6 +108,16 @@
         [cv addSubview:field];
         curY -= rowH + gap;
     };
+
+    // Protocol selection
+    _protocolPopup = [[NSPopUpButton alloc] init];
+    [_protocolPopup addItemsWithTitles:@[
+        @"TN3270  —  Mainframe (z/OS)",
+        @"TN5250  —  Midrange (IBM i / AS400)",
+    ]];
+    [_protocolPopup setTarget:self];
+    [_protocolPopup setAction:@selector(protocolChanged:)];
+    addRow(@"Protocol:", _protocolPopup);
 
     // Host — editable combo with connection history
     _hostCombo = [[NSComboBox alloc] init];
@@ -178,6 +190,27 @@
         [NSURL URLWithString:@"https://buy.stripe.com/7sY9AT3VMfKi53942m3VC05"]];
 }
 
+- (void)protocolChanged:(id)sender {
+    BOOL is5250 = (_protocolPopup.indexOfSelectedItem == 1);
+    if (is5250) {
+        // 5250 only supports Standard (24x80) and Wide (27x132)
+        [_modelPopup removeAllItems];
+        [_modelPopup addItemsWithTitles:@[
+            @"Standard \u2014 24\u00d780",
+            @"Wide \u2014 27\u00d7132",
+        ]];
+    } else {
+        [_modelPopup removeAllItems];
+        [_modelPopup addItemsWithTitles:@[
+            @"Model 2 \u2014 24\u00d780 (default)",
+            @"Model 3 \u2014 32\u00d780",
+            @"Model 4 \u2014 43\u00d780",
+            @"Model 5 \u2014 27\u00d7132 (wide)",
+            @"Large \u2014 62\u00d7160 (non-standard)",
+        ]];
+    }
+}
+
 - (void)sslToggled:(id)sender {
     BOOL sslOn = _sslCheckbox.state == NSControlStateValueOn;
     _caField.hidden = !sslOn;
@@ -213,15 +246,27 @@
     default: cp = x3270::CodePage::CP037;  break;
     }
 
-    // Map screen model selection
+    // Map screen model selection (5250 uses simpler mapping)
     x3270::TerminalModel model;
-    switch (_modelPopup.indexOfSelectedItem) {
-    case 1:  model = x3270::TerminalModel::Model3;      break;
-    case 2:  model = x3270::TerminalModel::Model4;      break;
-    case 3:  model = x3270::TerminalModel::Model5;      break;
-    case 4:  model = x3270::TerminalModel::LargeCustom; break;
-    default: model = x3270::TerminalModel::Model2;      break;
+    BOOL is5250 = (_protocolPopup.indexOfSelectedItem == 1);
+    if (is5250) {
+        // 5250 model popup: 0=Standard(24x80), 1=Wide(27x132)
+        model = (_modelPopup.indexOfSelectedItem == 1)
+                ? x3270::TerminalModel::Model5
+                : x3270::TerminalModel::Model2;
+    } else {
+        switch (_modelPopup.indexOfSelectedItem) {
+        case 1:  model = x3270::TerminalModel::Model3;      break;
+        case 2:  model = x3270::TerminalModel::Model4;      break;
+        case 3:  model = x3270::TerminalModel::Model5;      break;
+        case 4:  model = x3270::TerminalModel::LargeCustom; break;
+        default: model = x3270::TerminalModel::Model2;      break;
+        }
     }
+
+    x3270::TerminalProtocol protocol = is5250
+        ? x3270::TerminalProtocol::TN5250
+        : x3270::TerminalProtocol::TN3270;
 
     _connectButton.enabled = NO;
     _statusLabel.stringValue = @"Connecting…";
@@ -233,7 +278,8 @@
                                                 useSSL:useSSL
                                               caBundle:caBundle
                                              codePage:cp
-                                                model:model];
+                                                model:model
+                                             protocol:protocol];
     [_terminals addObject:twc];
     [twc showWindow:nil];
 
@@ -299,6 +345,12 @@ static const NSInteger  kHistoryMax = 20;
         NSInteger cp = [last[@"codepage"] integerValue];
         if (cp >= 0 && cp < _codePagePopup.numberOfItems)
             [_codePagePopup selectItemAtIndex:cp];
+        // Restore protocol first (it may change model popup items)
+        NSInteger proto = [last[@"protocol"] integerValue];
+        if (proto >= 0 && proto < _protocolPopup.numberOfItems) {
+            [_protocolPopup selectItemAtIndex:proto];
+            [self protocolChanged:nil];
+        }
         NSInteger model = [last[@"model"] integerValue];
         if (model >= 0 && model < _modelPopup.numberOfItems)
             [_modelPopup selectItemAtIndex:model];
@@ -319,6 +371,7 @@ static const NSInteger  kHistoryMax = 20;
         @"ca":       _caField.stringValue ?: @"",
         @"codepage": @(_codePagePopup.indexOfSelectedItem),
         @"model":    @(_modelPopup.indexOfSelectedItem),
+        @"protocol": @(_protocolPopup.indexOfSelectedItem),
     };
 
     // Remove existing entry for same host:port so it moves to top
@@ -351,6 +404,11 @@ static const NSInteger  kHistoryMax = 20;
     NSInteger cp = [entry[@"codepage"] integerValue];
     if (cp >= 0 && cp < _codePagePopup.numberOfItems)
         [_codePagePopup selectItemAtIndex:cp];
+    NSInteger proto = [entry[@"protocol"] integerValue];
+    if (proto >= 0 && proto < _protocolPopup.numberOfItems) {
+        [_protocolPopup selectItemAtIndex:proto];
+        [self protocolChanged:nil];
+    }
     NSInteger model = [entry[@"model"] integerValue];
     if (model >= 0 && model < _modelPopup.numberOfItems)
         [_modelPopup selectItemAtIndex:model];

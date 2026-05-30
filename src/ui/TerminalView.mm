@@ -53,10 +53,11 @@ static NSColor *colorFor3270Code(uint8_t code) {
 }
 
 @implementation TerminalView {
-    x3270::ScreenBuffer*    _screen;
-    x3270::KeyboardState*   _kbd;
-    x3270::GraphicsBuffer*  _graphics;   // GOCA drawing command list (may be nil)
-    x3270::EbcdicCodec      _codec;
+    x3270::ScreenBuffer*      _screen;
+    x3270::KeyboardState*     _kbd;     // TN3270 keyboard (nil in 5250 mode)
+    x3270::KeyboardState5250* _kbd5250; // TN5250 keyboard (nil in 3270 mode)
+    x3270::GraphicsBuffer*    _graphics;   // GOCA drawing command list (3270 only)
+    x3270::EbcdicCodec        _codec;
 
     NSTimer* _cursorTimer;
     BOOL     _cursorVisible;
@@ -157,8 +158,20 @@ static NSColor *colorFor3270Code(uint8_t code) {
 
 - (void)setScreenBuffer:(x3270::ScreenBuffer*)screen
           keyboardState:(x3270::KeyboardState*)kbd {
-    _screen = screen;
-    _kbd    = kbd;
+    _screen  = screen;
+    _kbd     = kbd;
+    _kbd5250 = nullptr;
+    if (screen) {
+        _rows = screen->rows();
+        _cols = screen->cols();
+    }
+}
+
+- (void)setScreenBuffer:(x3270::ScreenBuffer*)screen
+      keyboardState5250:(x3270::KeyboardState5250*)kbd {
+    _screen  = screen;
+    _kbd     = nullptr;
+    _kbd5250 = kbd;
     if (screen) {
         _rows = screen->rows();
         _cols = screen->cols();
@@ -461,22 +474,20 @@ static constexpr CGFloat kGocaCellH = 12.0; // must match AH in buildQueryReply(
     NSString *statusStr = @"";
     if (_kbd) {
         switch (_kbd->lockReason()) {
-        case x3270::KeyboardState::LockReason::None:
-            statusStr = @"";
-            break;
-        case x3270::KeyboardState::LockReason::Connecting:
-            statusStr = @"Connecting...";
-            break;
-        case x3270::KeyboardState::LockReason::System:
-            statusStr = @"X SYS";
-            break;
-        case x3270::KeyboardState::LockReason::OErr:
-            statusStr = @"X OERR";
-            break;
+        case x3270::KeyboardState::LockReason::None:        statusStr = @""; break;
+        case x3270::KeyboardState::LockReason::Connecting:  statusStr = @"Connecting..."; break;
+        case x3270::KeyboardState::LockReason::System:      statusStr = @"X SYS"; break;
+        case x3270::KeyboardState::LockReason::OErr:        statusStr = @"X OERR"; break;
         }
-        if (_kbd->isInsertMode()) {
-            statusStr = [statusStr stringByAppendingString:@" INS"];
+        if (_kbd->isInsertMode()) statusStr = [statusStr stringByAppendingString:@" INS"];
+    } else if (_kbd5250) {
+        switch (_kbd5250->lockReason()) {
+        case x3270::KeyboardState5250::LockReason::None:        statusStr = @"5250"; break;
+        case x3270::KeyboardState5250::LockReason::Connecting:  statusStr = @"5250  Connecting..."; break;
+        case x3270::KeyboardState5250::LockReason::System:      statusStr = @"5250  X SYS"; break;
+        case x3270::KeyboardState5250::LockReason::OErr:        statusStr = @"5250  X OERR"; break;
         }
+        if (_kbd5250->isInsertMode()) statusStr = [statusStr stringByAppendingString:@" INS"];
     }
 
     // Cursor position (1-based)
@@ -496,7 +507,7 @@ static constexpr CGFloat kGocaCellH = 12.0; // must match AH in buildQueryReply(
     static dispatch_once_t vOnce;
     dispatch_once(&vOnce, ^{
         NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
-        NSString *v = info[@"CFBundleShortVersionString"] ?: @"1.6.0";
+        NSString *v = info[@"CFBundleShortVersionString"] ?: @"1.7.0";
         NSString *b = info[@"CFBundleVersion"] ?: @"1";
         versionStr = [NSString stringWithFormat:@"DX3270 v%@ build %@  \u2014  \u00a9 2026 Swen Skalski", v, b];
     });
@@ -518,7 +529,7 @@ static constexpr CGFloat kGocaCellH = 12.0; // must match AH in buildQueryReply(
 // lookup, or on certain keyboard layouts).  Mirror the PF-key logic here so
 // those events are not silently dropped.
 - (BOOL)performKeyEquivalent:(NSEvent *)event {
-    if (!_kbd) return NO;
+    if (!_kbd && !_kbd5250) return NO;
 
     NSUInteger modifiers = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     // Let Cmd+Fkey pass through so app-level shortcuts (⌘Q, ⌘N …) still work.
@@ -531,16 +542,18 @@ static constexpr CGFloat kGocaCellH = 12.0; // must match AH in buildQueryReply(
     if (key >= NSF1FunctionKey && key <= NSF12FunctionKey) {
         int pfNum = (int)(key - NSF1FunctionKey + 1);
         if (shiftDown) pfNum += 12;   // Shift+F1-F12 → PF13-24
-        BOOL handled = _kbd->handlePF(pfNum);
+        BOOL handled = NO;
+        if (_kbd)     handled = _kbd->handlePF(pfNum);
+        if (_kbd5250) handled = _kbd5250->handlePFKey(pfNum);
         if (handled) [self setNeedsDisplay:YES];
-        else if (_kbd->lockReason() == x3270::KeyboardState::LockReason::OErr) NSBeep();
-        return YES;  // consume the event regardless so macOS takes no further action
+        else NSBeep();
+        return YES;
     }
     return [super performKeyEquivalent:event];
 }
 
 - (void)keyDown:(NSEvent *)event {
-    if (!_kbd) { [super keyDown:event]; return; }
+    if (!_kbd && !_kbd5250) { [super keyDown:event]; return; }
 
     NSUInteger modifiers = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     BOOL altDown   = (modifiers & NSEventModifierFlagOption)  != 0;
@@ -552,6 +565,66 @@ static constexpr CGFloat kGocaCellH = 12.0; // must match AH in buildQueryReply(
 
     BOOL handled = NO;
 
+    // ── 5250 keyboard ─────────────────────────────────────────────────────────
+    if (_kbd5250) {
+        if (key >= NSF1FunctionKey && key <= NSF12FunctionKey) {
+            int pfNum = (int)(key - NSF1FunctionKey + 1);
+            if (shiftDown) pfNum += 12;
+            handled = _kbd5250->handlePFKey(pfNum);
+        }
+        else if (key == '\r' || key == '\n') {
+            handled = _kbd5250->handleEnter();
+        }
+        else if (key == '\t') {
+            handled = _kbd5250->handleTab(shiftDown);
+        }
+        else if (key == 27) {
+            handled = _kbd5250->handleAttn(); // Escape = Attention in 5250
+        }
+        else if (key == NSPageUpFunctionKey) {
+            handled = _kbd5250->handlePageUp();
+        }
+        else if (key == NSPageDownFunctionKey) {
+            handled = _kbd5250->handlePageDown();
+        }
+        else if (altDown && (key == 'e' || key == 'E')) {
+            handled = _kbd5250->handleEraseField();
+        }
+        else if (key == NSHomeFunctionKey) {
+            handled = _kbd5250->handleHome();
+        }
+        else if (key == NSDeleteFunctionKey) {
+            handled = _kbd5250->handleDelete();
+        }
+        else if (key == NSBackspaceCharacter || key == NSDeleteCharacter) {
+            handled = _kbd5250->handleBackspace();
+        }
+        else if (key == NSInsertFunctionKey) {
+            handled = _kbd5250->handleInsert();
+        }
+        else if (key == NSUpArrowFunctionKey)    { handled = _kbd5250->handleArrow(-1, 0); }
+        else if (key == NSDownArrowFunctionKey)  { handled = _kbd5250->handleArrow(+1, 0); }
+        else if (key == NSLeftArrowFunctionKey)  { handled = _kbd5250->handleArrow(0, -1); }
+        else if (key == NSRightArrowFunctionKey) { handled = _kbd5250->handleArrow(0, +1); }
+        else if (!altDown) {
+            NSString *chars = event.characters;
+            if (chars.length > 0) {
+                unichar c = [chars characterAtIndex:0];
+                if (c >= 0x20 && c < 0x80) {
+                    handled = _kbd5250->handleChar(static_cast<uint8_t>(c));
+                }
+            }
+        }
+
+        if (handled) {
+            [self setNeedsDisplay:YES];
+        } else {
+            if (_kbd5250->lockReason() == x3270::KeyboardState5250::LockReason::OErr) NSBeep();
+        }
+        return;
+    }
+
+    // ── 3270 keyboard (existing logic) ────────────────────────────────────────
     // PF keys: F1-F12 (PF1-12), Shift+F1-F12 (PF13-24)
     if (key >= NSF1FunctionKey && key <= NSF12FunctionKey) {
         int pfNum = (int)(key - NSF1FunctionKey + 1);
