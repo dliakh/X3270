@@ -60,6 +60,16 @@ void ScreenBuffer::eraseAllUnprotected() {
     dirty_ = true;
 }
 
+void ScreenBuffer::resetAllMDT() {
+    const int sz = rows_ * cols_;
+    for (int i = 0; i < sz; ++i) {
+        if (cells_[i].isFA) {
+            cells_[i].attr &= ~FA_MDT;
+        }
+    }
+    dirty_ = true;
+}
+
 void ScreenBuffer::writeChar(uint8_t ebcdic) {
     Cell& c     = cells_[bufPtr_];
     c.ch        = ebcdic;
@@ -72,7 +82,7 @@ void ScreenBuffer::writeChar(uint8_t ebcdic) {
     dirty_ = true;
 }
 
-void ScreenBuffer::startField(uint8_t attrByte, uint8_t fgColor, uint8_t bgColor, uint8_t highlight) {
+void ScreenBuffer::startField(uint8_t attrByte, uint8_t fgColor, uint8_t bgColor, uint8_t highlight, uint16_t fieldLen) {
     Cell& c     = cells_[bufPtr_];
     c.ch        = 0x00;
     c.attr      = attrByte;
@@ -80,6 +90,7 @@ void ScreenBuffer::startField(uint8_t attrByte, uint8_t fgColor, uint8_t bgColor
     c.fgColor   = fgColor;
     c.bgColor   = bgColor;
     c.highlight = highlight;
+    c.fieldLen  = fieldLen;
     // The field’s extended colour becomes the default for subsequent characters
     currentAttr_      = attrByte;
     currentFgColor_   = fgColor;
@@ -136,16 +147,6 @@ void ScreenBuffer::setMDT(int bufferPos) {
     if (fa >= 0) {
         cells_[fa].attr |= FA_MDT;
     }
-}
-
-void ScreenBuffer::resetAllMDT() {
-    const int sz = rows_ * cols_;
-    for (int i = 0; i < sz; ++i) {
-        if (cells_[i].isFA) {
-            cells_[i].attr &= ~FA_MDT;
-        }
-    }
-    dirty_ = true;
 }
 
 // ── Read Modified ─────────────────────────────────────────────────────────────

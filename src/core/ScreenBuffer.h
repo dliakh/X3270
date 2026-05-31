@@ -29,6 +29,7 @@ struct Cell {
     uint8_t  fgColor   { 0x00 }; // foreground colour (0=field-default)
     uint8_t  bgColor   { 0x00 }; // background colour (0=black)
     uint8_t  highlight { 0x00 }; // 0=normal, 0xF2=reverse, 0xF4=underscore, 0xF1=blink
+    uint16_t fieldLen  { 0 };    // (FA cells only) usable character count; 0 = infer from layout
 
     bool isProtected()  const { return (attr & FA_PROTECTED) != 0; }
     bool isNumeric()    const { return (attr & FA_NUMERIC)   != 0; }
@@ -73,7 +74,8 @@ public:
     void startField(uint8_t attrByte,
                     uint8_t fgColor   = 0x00,
                     uint8_t bgColor   = 0x00,
-                    uint8_t highlight = 0x00);
+                    uint8_t highlight = 0x00,
+                    uint16_t fieldLen = 0);
 
     /// Update the "current" SA-order colour/highlight applied to subsequent writeChar calls.
     void setCurrentFgColor(uint8_t c)   { currentFgColor_   = c; }
@@ -122,15 +124,16 @@ public:
     void clearDirty()     { dirty_ = false; }
     void markDirty()      { dirty_ = true; }
 
+    /// Find the field attribute cell that governs bufPos.
+    /// Returns the index of the FA cell, or -1 if the screen is unformatted.
+    int findFieldStart(int bufPos) const;
+
 private:
     int clamp(int pos) const {
         int sz = rows_ * cols_;
         if (pos < 0) pos = (pos % sz + sz) % sz;
         return pos % sz;
     }
-
-    /// Find the field attribute cell that governs bufPos
-    int findFieldStart(int bufPos) const;
 
     TerminalModel model_;
     int     rows_;

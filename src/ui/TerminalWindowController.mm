@@ -113,6 +113,11 @@
             __strong auto s = weakSelf;
             if (s) s->_session->sendRecord(payload);
         });
+        // Query reply uses GDS opcode NO_OP (0x00), not PUT_GET (0x03)
+        _parser5250->setQueryReplyCallback([weakSelf, session5250](const std::vector<uint8_t>& payload) {
+            __strong auto s = weakSelf;
+            if (s) session5250->sendGdsRecord(payload, x3270::GDS_OP_NO_OP);
+        });
 
         _kbd5250->setSendCallback([weakSelf](const std::vector<uint8_t>& record) -> bool {
             __strong auto s = weakSelf;
@@ -122,8 +127,8 @@
         _session->setDataCallback([weakSelf](const std::vector<uint8_t>& record) {
             __strong auto s = weakSelf;
             if (!s) return;
-            // Debug: log every 5250 record to Console so we can see if data arrives
-            // and whether the GDS header bytes look correct.
+
+            // Log the GDS record header for debugging
             if (!record.empty()) {
                 uint8_t b0 = record.size()>0 ? record[0] : 0;
                 uint8_t b1 = record.size()>1 ? record[1] : 0;
@@ -134,6 +139,20 @@
                 NSLog(@"[5250] record %zu bytes  GDS hdr: %02X %02X %02X %02X  opcode=%02X flags=%02X",
                       record.size(), b0, b1, b2, b3, b4, b5);
             }
+
+            // Per the reference (session.c tn5250_session_handle_receive):
+            // PUT_GET (0x03) and INVITE (0x01) opcodes immediately unlock the keyboard
+            // (set invited=1 and clear X_CLOCK indicator) BEFORE processing stream content.
+            if (record.size() >= 10) {
+                uint8_t opcode = record[9];
+                if (opcode == 0x01 || opcode == 0x03) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        __strong auto s2 = weakSelf;
+                        if (s2) s2->_kbd5250->unlock();
+                    });
+                }
+            }
+
             s->_parser5250->processRecord(record);
             NSLog(@"[5250] after processRecord: bufPtr=%d", s->_screen->bufferPointer());
             dispatch_async(dispatch_get_main_queue(), ^{

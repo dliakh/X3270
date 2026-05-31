@@ -58,6 +58,11 @@ void TN5250Session::disconnect() {
 // ── Send path ─────────────────────────────────────────────────────────────────
 bool TN5250Session::sendRecord(const std::vector<uint8_t>& record) {
     if (state_ != State::Connected) return false;
+    return sendGdsRecord(record, GDS_OP_PUT_GET);
+}
+
+bool TN5250Session::sendGdsRecord(const std::vector<uint8_t>& payload, uint8_t opcode) {
+    if (state_ != State::Connected) return false;
 
     // Build GDS wrapper — 10-byte header per tn5250 reference (telnetstr.c / record.h):
     //   [0-1] total length (big-endian)
@@ -67,8 +72,8 @@ bool TN5250Session::sendRecord(const std::vector<uint8_t>& record) {
     //   [6]   0x04  variable header length
     //   [7]   0x00  flags (TN5250_RECORD_H_NONE)
     //   [8]   0x00  reserved
-    //   [9]   0x00  opcode (TN5250_RECORD_OPCODE_NO_OP)
-    uint16_t totalLen = static_cast<uint16_t>(GDS_HEADER_LENGTH + record.size());
+    //   [9]   opcode (GDS_OP_PUT_GET=0x03 for input records, GDS_OP_NO_OP=0x00 for query reply)
+    uint16_t totalLen = static_cast<uint16_t>(GDS_HEADER_LENGTH + payload.size());
     std::vector<uint8_t> gds;
     gds.reserve(totalLen);
     gds.push_back(static_cast<uint8_t>(totalLen >> 8));
@@ -80,8 +85,8 @@ bool TN5250Session::sendRecord(const std::vector<uint8_t>& record) {
     gds.push_back(0x04); // variable header length
     gds.push_back(0x00); // flags (TN5250_RECORD_H_NONE)
     gds.push_back(0x00); // reserved
-    gds.push_back(0x00); // opcode (TN5250_RECORD_OPCODE_NO_OP)
-    gds.insert(gds.end(), record.begin(), record.end());
+    gds.push_back(opcode); // GDS opcode
+    gds.insert(gds.end(), payload.begin(), payload.end());
 
     auto escaped = escapeRecord(gds);
     if (trafficCb_) trafficCb_(true, escaped);

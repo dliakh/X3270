@@ -53,9 +53,12 @@ public:
 
     DataStream5250Parser(ScreenBuffer& screen);
 
-    void setAlarmCallback(AlarmCallback cb)  { alarmCb_  = std::move(cb); }
-    void setUnlockCallback(UnlockCallback cb){ unlockCb_ = std::move(cb); }
-    void setSendCallback(SendCallback cb)    { sendCb_   = std::move(cb); }
+    void setAlarmCallback(AlarmCallback cb)        { alarmCb_       = std::move(cb); }
+    void setUnlockCallback(UnlockCallback cb)      { unlockCb_      = std::move(cb); }
+    void setSendCallback(SendCallback cb)          { sendCb_        = std::move(cb); }
+    /// Called when a WRITE STRUCTURED FIELD (Query) is received and we need to
+    /// send a query reply. Uses GDS opcode NO_OP (not PUT_GET) as per reference.
+    void setQueryReplyCallback(SendCallback cb)   { queryReplyCb_  = std::move(cb); }
 
     /// Process a complete 5250 record from the host.
     /// The caller must strip the Telnet IAC EOR framing.
@@ -65,6 +68,7 @@ public:
 private:
     enum class ParseState {
         Command,
+        EscSeen,        ///< Consumed ESC (0x04); next byte is the actual command
         WCC1,
         WCC2,
         Data,
@@ -72,31 +76,29 @@ private:
         TD_LenHi,     TD_LenLo,   TD_Data,
         SBA_Row,
         // SF order: optional FFW1+FFW2, then zero-or-more FCW pairs, then attr byte + 2-byte length.
-        // Detection uses (b & 0xE0) != 0x20 (not an attr byte) per 5250 reference.
         SF_FirstByte,           ///< (b&0xE0)!=0x20 → FFW1; else b is attr byte → startField + SF_LenHi
         SF_FFW2,                ///< Consume FFW2; next → SF_AfterFFW
         SF_AfterFFW,            ///< Loop head: (b&0xE0)!=0x20 → FCW1 (SF_FCW2); else attr → startField + SF_LenHi
         SF_FCW2,                ///< Consume FCW2; loop back → SF_AfterFFW
-        SF_LenHi,  SF_LenLo,   ///< Field length (2 bytes big-endian, informational only)
-        // WDSF order: 2-byte big-endian length (including the 2 length bytes), then skip body
+        SF_LenHi,  SF_LenLo,   ///< Field length (2 bytes big-endian)
         WDSF_LenHi, WDSF_LenLo, WDSF_Skip,
         WEA_Skip,
-        // IC order: in 5250, IC takes explicit [row][col] parameters (unlike 3270)
         IC_Row,       IC_Col,
         MC_Row,       MC_Col,
         RA_Row,       RA_Col,     RA_Char,
         EA_Row,       EA_Col,
-        SkipOneThenCommand,     ///< Consume one byte then return to Command (e.g. CLEAR_UNIT_ALT param)
-        // CMD_WRITE_STRUCTURED_FIELD (0xF3): consume SF body bytes, then fire query reply.
-        // Uses sohRemaining_ as the byte counter.
-        WSF_Skip,               ///< Skip SF body bytes after WRITE STRUCTURED FIELD (0xF3)
+        SkipOneThenCommand,     ///< Consume one byte then return to Command (CLEAR_UNIT_ALT param)
+        // CMD_WRITE_STRUCTURED_FIELD (0xF3): consume SF body, then send query reply.
+        WSF_LenHi,  WSF_LenLo, ///< 2-byte length field of the Write Structured Field
+        WSF_Skip,               ///< Skip WSF body bytes, fire query reply when done
     };
 
     ScreenBuffer& screen_;
 
     AlarmCallback  alarmCb_;
     UnlockCallback unlockCb_;
-    SendCallback   sendCb_;
+    SendCallback   sendCb_;       ///< AID/input records (PUT_GET opcode)
+    SendCallback   queryReplyCb_; ///< Query reply records (NO_OP opcode)
 
     ParseState state_ { ParseState::Command };
 
@@ -109,10 +111,14 @@ private:
     // Active field attributes (accumulated from SF order parsing)
     uint8_t  currentFFW1_    { 0 };
     uint8_t  currentFFW2_    { 0 };
-    uint8_t  currentFgColor_ { 0 };
-    uint8_t  currentFieldLenHi_ { 0 }; ///< High byte of SF field length
+    uint8_t  currentFieldLenHi_ { 0 };
+    uint8_t  pendingFieldAttr_  { 0 }; ///< Attr byte deferred until we have the length (SF_LenLo)
+    uint8_t  pendingCC1_        { 0 }; ///< CC1 byte saved during WCC1 state for CC1 processing
+    uint8_t  pendingCC2_        { 0 }; ///< CC2 byte saved; alarm/unlock fired after WTD data loop
+    uint16_t wsfBodyLen_        { 0 }; ///< WSF body bytes remaining
 
     void handleCommand(uint8_t cmd);
+    void handleCC1(uint8_t cc1);
     void handleDataByte(uint8_t b);
 
     /// Build the 61-byte query reply payload (per IBM 5250 Functions Reference, §15.27.2).

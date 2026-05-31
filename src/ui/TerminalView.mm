@@ -52,6 +52,36 @@ static NSColor *colorFor3270Code(uint8_t code) {
     }
 }
 
+// Maps a 5250 field-attribute byte (0x20-0x3F) to a foreground NSColor.
+// IBM 5250 display attributes: bits [4:2] encode colour/highlight.
+//   0x20 = Green          0x21 = Green/Reverse        0x22 = White
+//   0x23 = White/Reverse  0x24 = Green/Underline       0x25 = Green/Reverse/Underline
+//   0x26 = Non-display    0x27 = Non-display           0x28 = Red
+//   0x29 = Red/Reverse    0x2A = Red/Underline         0x2B = Red/Reverse/Underline
+//   0x2C = Intensified/White  0x2D = Intensified/White/Reverse  ...
+static NSColor *colorFor5250Attr(uint8_t attr) {
+    switch (attr & 0x3E) {  // bits [5:1] carry the colour+modifier info
+    case 0x20: case 0x24:                // Green, Green+Underline
+        return [NSColor colorWithRed:0.20 green:0.85 blue:0.20 alpha:1.0];
+    case 0x22: case 0x26:                // White, Non-display → treat as white
+        return [NSColor colorWithRed:0.85 green:0.85 blue:0.85 alpha:1.0];
+    case 0x28: case 0x2A:                // Red, Red+Underline
+        return [NSColor colorWithRed:1.00 green:0.33 blue:0.33 alpha:1.0];
+    case 0x2C: case 0x2E:                // Intensified / Cyan
+        return [NSColor colorWithRed:0.20 green:0.85 blue:0.85 alpha:1.0];
+    case 0x30: case 0x32:                // Yellow
+        return [NSColor colorWithRed:0.85 green:0.85 blue:0.20 alpha:1.0];
+    case 0x34: case 0x36:                // Pink/Magenta
+        return [NSColor colorWithRed:1.00 green:0.44 blue:1.00 alpha:1.0];
+    case 0x38: case 0x3A:                // Blue
+        return [NSColor colorWithRed:0.22 green:0.52 blue:1.00 alpha:1.0];
+    case 0x3C: case 0x3E:                // Turquoise
+        return [NSColor colorWithRed:0.20 green:0.85 blue:0.85 alpha:1.0];
+    default:   // also reverse-video variants — return base green
+        return [NSColor colorWithRed:0.20 green:0.85 blue:0.20 alpha:1.0];
+    }
+}
+
 @implementation TerminalView {
     x3270::ScreenBuffer*      _screen;
     x3270::KeyboardState*     _kbd;     // TN3270 keyboard (nil in 5250 mode)
@@ -223,7 +253,12 @@ static NSColor *colorFor3270Code(uint8_t code) {
             // ── Foreground colour ─────────────────────────────────────────────
             // Priority: per-cell SA extended colour > FA-attribute default colour
             NSColor *fg;
-            if (cell.fgColor != 0x00) {
+            if (_kbd5250 != nil) {
+                // 5250 mode: resolve colour from the FA cell governing this position
+                int faIdx = _screen->findFieldStart(pos);
+                uint8_t faAttr = (faIdx >= 0) ? _screen->at(faIdx).attr : 0x20;
+                fg = colorFor5250Attr(faAttr);
+            } else if (cell.fgColor != 0x00) {
                 fg = colorFor3270Code(cell.fgColor) ?: _foregroundColor;
             } else {
                 // DEFCOLOR_MAP: index 0-3 from protected (bit5) + intensified (bit3)

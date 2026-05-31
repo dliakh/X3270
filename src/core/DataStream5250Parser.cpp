@@ -50,30 +50,42 @@ void DataStream5250Parser::processRecord(const std::vector<uint8_t>& record) {
         uint8_t b = data[i];
         switch (state_) {
         case ParseState::Command:
+            // The 5250 data stream uses ESC (0x04) as a command prefix.
+            // Every top-level command is: ESC byte followed by the CMD byte.
+            // (Within WTD data, ESC signals end of data and return to Command.)
+            if (b == ESC5250) {
+                state_ = ParseState::EscSeen;
+            }
+            // else: stray byte before ESC — skip it (mirrors reference "Ignoring record!")
+            break;
+
+        case ParseState::EscSeen:
+            // b is the actual command byte following ESC
             handleCommand(b);
             break;
+
         case ParseState::WCC1:
-            // WCC1: bit 7 = lock keyboard, bit 2 = reset MDT
+            // CC1 (Control Code 1): handle MDT reset and field null operations.
+            // CC1 & 0xE0 bits determine what to do with fields; CC1 & 0x80 = lock KB.
+            // We fire the CC1 actions immediately, then save CC1 for reference.
+            pendingCC1_ = b;
+            handleCC1(b);
             state_ = ParseState::WCC2;
             break;
+
         case ParseState::WCC2:
-            // CC2 bit layout per 5250 reference (session.h):
-            //   0x04 = TN5250_SESSION_CTL_ALARM
-            //   0x08 = TN5250_SESSION_CTL_UNLOCK
-            if (b & 0x04) {
-                if (alarmCb_) alarmCb_();
-            }
-            if (b & 0x08) {
-                if (unlockCb_) unlockCb_();
-            }
+            // CC2 bits — alarm and unlock are fired AFTER the WTD data loop ends.
+            // Save CC2 and process it when we see ESC (end of WTD data) or EOR.
+            pendingCC2_ = b;
             state_ = ParseState::Data;
             break;
+
         case ParseState::Data:
             handleDataByte(b);
             break;
 
         case ParseState::SOH_Length:
-            sohRemaining_ = b;  // number of bytes to skip
+            sohRemaining_ = b;
             state_ = (b > 0) ? ParseState::SOH_Data : ParseState::Data;
             break;
         case ParseState::SOH_Data:
@@ -95,7 +107,6 @@ void DataStream5250Parser::processRecord(const std::vector<uint8_t>& record) {
 
         case ParseState::SBA_Row: {
             uint8_t row = b;
-            // Peek at next byte for col
             if (i + 1 < len) {
                 uint8_t col = data[++i];
                 int offset = rowColToOffset(row, col);
@@ -106,51 +117,43 @@ void DataStream5250Parser::processRecord(const std::vector<uint8_t>& record) {
         }
 
         case ParseState::SF_FirstByte:
-            // 5250 reference: FFW present when (b & 0xe0) != 0x20 (i.e. not an attr byte).
-            // Attribute bytes are always in range 0x20-0x3F (bits[7:5] = 001).
             if ((b & 0xE0) != 0x20) {
-                // This byte is FFW1 (input field)
+                // FFW1 byte (input field)
                 currentFFW1_ = b;
                 state_ = ParseState::SF_FFW2;
             } else {
-                // No FFW: b IS the attribute byte (output-only field).
-                // Write the FA at the current buffer position — output-only fields
-                // have FA_PROTECTED set because all 5250 attr bytes have bit 5 (0x20) set.
-                screen_.startField(b);
+                // No FFW — b IS the attribute byte (output-only / protected field)
+                pendingFieldAttr_ = b;
                 state_ = ParseState::SF_LenHi;
             }
             break;
         case ParseState::SF_FFW2:
             currentFFW2_ = b;
-            // Transition to the FCW loop head
             state_ = ParseState::SF_AfterFFW;
             break;
         case ParseState::SF_AfterFFW:
-            // Loop head: consume zero-or-more FCW pairs until we see the attribute byte.
-            // Reference: while ((cur_char & 0xe0) != 0x20) { consume FCW1, FCW2, read next }
             if ((b & 0xE0) != 0x20) {
-                // Not an attr byte → this is FCW1; consume FCW2 and loop back
+                // FCW1 — consume FCW2 and loop
                 state_ = ParseState::SF_FCW2;
             } else {
-                // b IS the attribute byte for an input field
-                screen_.startField(ffw1ToAttr(currentFFW1_));
+                // b is the attribute byte; map FFW1 → ScreenBuffer attr
+                pendingFieldAttr_ = ffw1ToAttr(currentFFW1_);
                 state_ = ParseState::SF_LenHi;
             }
             break;
         case ParseState::SF_FCW2:
-            // FCW2 consumed; loop back to check for more FCW pairs (or the attr byte)
             state_ = ParseState::SF_AfterFFW;
             break;
         case ParseState::SF_LenHi:
-            // High byte of 5250 field length (informational; field already started above)
             currentFieldLenHi_ = b;
             state_ = ParseState::SF_LenLo;
             break;
-        case ParseState::SF_LenLo:
-            // Low byte of field length — field was already registered at the attr byte.
-            // Length is informational only; our model uses buffer positions implicitly.
+        case ParseState::SF_LenLo: {
+            uint16_t flen = (static_cast<uint16_t>(currentFieldLenHi_) << 8) | b;
+            screen_.startField(pendingFieldAttr_, 0x00, 0x00, 0x00, flen);
             state_ = ParseState::Data;
             break;
+        }
 
         case ParseState::RA_Row:
             raRow_ = b;
@@ -179,19 +182,15 @@ void DataStream5250Parser::processRecord(const std::vector<uint8_t>& record) {
         }
 
         case ParseState::WEA_Skip:
-            // WEA has 2 bytes following (type + value); consume both by
-            // re-using sohRemaining_ as a 2-byte counter.
             if (--sohRemaining_ == 0) state_ = ParseState::Data;
             break;
 
         case ParseState::WDSF_LenHi:
-            // WDSF has a 2-byte big-endian length (includes both length bytes).
             tdRemaining_ = static_cast<uint16_t>(b) << 8;
             state_ = ParseState::WDSF_LenLo;
             break;
         case ParseState::WDSF_LenLo:
             tdRemaining_ |= b;
-            // Subtract the 2 length bytes themselves to get the body byte count.
             tdRemaining_ = (tdRemaining_ >= 2) ? tdRemaining_ - 2 : 0;
             state_ = (tdRemaining_ > 0) ? ParseState::WDSF_Skip : ParseState::Data;
             break;
@@ -204,7 +203,6 @@ void DataStream5250Parser::processRecord(const std::vector<uint8_t>& record) {
             state_ = ParseState::MC_Col;
             break;
         case ParseState::MC_Col: {
-            // MC moves the cursor only; does NOT change the buffer write address
             int dest = rowColToOffset(raRow_, b);
             if (dest >= 0) screen_.setCursor(dest);
             state_ = ParseState::Data;
@@ -216,8 +214,8 @@ void DataStream5250Parser::processRecord(const std::vector<uint8_t>& record) {
             state_ = ParseState::IC_Col;
             break;
         case ParseState::IC_Col: {
-            // IC places the cursor at the explicit [row][col] given in the order.
-            // It does NOT change the buffer write address (bufPtr_).
+            // IC sets the insert-cursor (pending cursor position after WTD completes).
+            // The reference calls set_pending_insert which sets cursorPos.
             int dest = rowColToOffset(raRow_, b);
             if (dest >= 0) screen_.setCursor(dest);
             state_ = ParseState::Data;
@@ -225,19 +223,57 @@ void DataStream5250Parser::processRecord(const std::vector<uint8_t>& record) {
         }
 
         case ParseState::SkipOneThenCommand:
-            // Used to consume a single parameter byte then return to command scanning
             state_ = ParseState::Command;
             break;
 
+        case ParseState::WSF_LenHi:
+            wsfBodyLen_ = static_cast<uint16_t>(b) << 8;
+            state_ = ParseState::WSF_LenLo;
+            break;
+        case ParseState::WSF_LenLo:
+            wsfBodyLen_ |= b;
+            // Length field includes the 2 length bytes themselves; subtract to get body count.
+            // Also subtract the 2 class+type bytes we already consumed.
+            wsfBodyLen_ = (wsfBodyLen_ >= 4) ? wsfBodyLen_ - 4 : 0;
+            state_ = (wsfBodyLen_ > 0) ? ParseState::WSF_Skip : ParseState::Command;
+            if (wsfBodyLen_ == 0 && queryReplyCb_) queryReplyCb_(buildQueryReplyPayload());
+            break;
         case ParseState::WSF_Skip:
-            // Consume remaining bytes of a WRITE STRUCTURED FIELD (0xF3) body.
-            // sohRemaining_ counts how many bytes to skip; query reply fires on the last byte.
-            if (--sohRemaining_ == 0) {
-                if (sendCb_) sendCb_(buildQueryReplyPayload());
+            if (--wsfBodyLen_ == 0) {
+                if (queryReplyCb_) queryReplyCb_(buildQueryReplyPayload());
                 state_ = ParseState::Command;
             }
             break;
         }
+    }
+
+    // After processing all bytes in this record, fire any deferred CC2 actions.
+    // (CC2 alarm/unlock apply after the WTD data stream ends.)
+    if (state_ == ParseState::Data || state_ == ParseState::Command) {
+        if (pendingCC2_ & 0x04) { if (alarmCb_)  alarmCb_(); }
+        if (pendingCC2_ & 0x08) { if (unlockCb_) unlockCb_(); }
+        pendingCC2_ = 0;
+    }
+}
+
+// ── CC1 handler ───────────────────────────────────────────────────────────────
+// CC1 bits (reference tn5250_session_handle_cc1):
+//   bits[7:5] == 0x00 → lock_kb=0 (unlock keyboard)
+//   bits[7:5] == 0x40 → reset non-bypass MDT
+//   bits[7:5] == 0x60 → reset all MDT
+//   bits[7:5] == 0x80 → null non-bypass fields with MDT
+//   bits[7:5] == 0xA0 → reset non-bypass MDT + null non-bypass
+//   bits[7:5] == 0xC0 → reset non-bypass MDT + null MDT non-bypass
+//   bits[7:5] == 0xE0 → reset all MDT + null non-bypass
+void DataStream5250Parser::handleCC1(uint8_t cc1) {
+    switch (cc1 & 0xE0) {
+    case 0x00: break; // lock_kb = false — keyboard stays unlocked
+    case 0x40: screen_.resetAllMDT(); break; // reset non-bypass MDT (simplified)
+    case 0x60: screen_.resetAllMDT(); break; // reset all MDT
+    case 0xA0: screen_.resetAllMDT(); break;
+    case 0xC0: screen_.resetAllMDT(); break;
+    case 0xE0: screen_.resetAllMDT(); break;
+    default:   break;
     }
 }
 
@@ -268,20 +304,16 @@ void DataStream5250Parser::handleCommand(uint8_t cmd) {
         break;
 
     case CMD5250_QUERY:  // 0xF3 = CMD_WRITE_STRUCTURED_FIELD
-        // IBM i sends WRITE STRUCTURED FIELD with SF type 0x70 (QUERY) or 0x72
-        // (QUERY_STATION_STATE) to request device capabilities before the sign-on screen.
-        // Reference: tn5250_session_write_structured_field reads 5 bytes then calls
-        // tn5250_session_query_reply.  We do the same: consume 5 SF bytes
-        // ([len_hi][len_lo][class=D9][type=70][flag]), then fire the reply.
-        sohRemaining_ = 5;
-        state_ = ParseState::WSF_Skip;
-        // sendCb_ is called after the 5 bytes are consumed in WSF_Skip
+        // IBM i sends WRITE STRUCTURED FIELD with a 2-byte length, then class (0xD9),
+        // then type (0x70 = QUERY). Read length, skip the body, fire query reply.
+        // The WSF_LenHi/LenLo states parse the 2-byte length; WSF_Skip consumes body.
+        wsfBodyLen_ = 0;
+        state_ = ParseState::WSF_LenHi;
         break;
 
-    case ESC5250:              // 0x04: ESC within a command context — next byte is a new command
-    case CMD5250_SAVE_SCREEN:  // 0x02
+    case CMD5250_SAVE_SCREEN:    // 0x02
     case CMD5250_RESTORE_SCREEN: // 0x12
-        // Phase 1: not supported — treat as no-op; re-enter Command state for next byte
+        // Not implemented — treat as no-op and return to Command state
         state_ = ParseState::Command;
         break;
 
@@ -300,8 +332,8 @@ void DataStream5250Parser::handleDataByte(uint8_t b) {
     // Bytes 0x40+ are displayable EBCDIC.
     // ESC (0x04) in the data stream signals the next command boundary.
     switch (b) {
-    case ESC5250:  // 0x04: command delimiter — switch back to Command state
-        state_ = ParseState::Command;
+    case ESC5250:  // 0x04: command delimiter — next byte is the actual command
+        state_ = ParseState::EscSeen;
         break;
     case ORD5250_SOH:
         state_ = ParseState::SOH_Length;

@@ -47,6 +47,13 @@ static constexpr uint8_t OP_CLEAR_UNIT_ALT     = 0x20;
 static constexpr uint8_t OP_WRITE_ERROR_CODE   = 0x21;
 static constexpr uint8_t OP_CLEAR_UNIT         = 0x40;
 
+// Client→host GDS opcodes (TN5250_RECORD_OPCODE_*)
+static constexpr uint8_t GDS_OP_NO_OP      = 0x00; ///< e.g. Query reply
+static constexpr uint8_t GDS_OP_INVITE     = 0x01;
+static constexpr uint8_t GDS_OP_OUTPUT_ONLY= 0x02;
+static constexpr uint8_t GDS_OP_PUT_GET    = 0x03; ///< Normal AID input record
+static constexpr uint8_t GDS_OP_READ_IMMED = 0x06;
+
 // ── TN5250Session ─────────────────────────────────────────────────────────────
 class TN5250Session : public ITerminalSession {
 public:
@@ -77,8 +84,11 @@ public:
     void disconnect() override;
     bool isConnected() const override { return state_ == State::Connected; }
 
-    /// Send a raw 5250 input record (GDS header is added here).
+    /// Send a raw 5250 input record (GDS header is added here; uses PUT_GET opcode).
     bool sendRecord(const std::vector<uint8_t>& record) override;
+
+    /// Send a raw 5250 record with an explicit GDS opcode.
+    bool sendGdsRecord(const std::vector<uint8_t>& payload, uint8_t opcode);
 
     /// Send Telnet IAC IP (Attention / system request).
     bool sendATTN();

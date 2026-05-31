@@ -70,6 +70,22 @@ bool KeyboardState5250::insertCharAtCursor(uint8_t ebcdic) {
     const Cell& cell = screen_.at(cur);
     if (cell.isFA) return false;
 
+    // Find the governing FA to get field length
+    int faPos = screen_.findFieldStart(cur);
+    if (faPos >= 0) {
+        const Cell& fa = screen_.at(faPos);
+        if (fa.fieldLen > 0) {
+            // Compute position within field (0-based from first char after FA)
+            int firstChar = (faPos + 1) % screen_.size();
+            int posInField = (cur - firstChar + screen_.size()) % screen_.size();
+            if (posInField >= static_cast<int>(fa.fieldLen)) {
+                // Field is full — lock keyboard with OErr
+                lock(LockReason::OErr);
+                return false;
+            }
+        }
+    }
+
     if (insertMode_) {
         int fieldEnd = (cur + 1) % screen_.size();
         for (int i = 0; i < screen_.size(); ++i) {
@@ -101,10 +117,13 @@ void KeyboardState5250::sendAID(uint8_t aidCode, bool includeModifiedFields) {
     uint8_t curRow, curCol;
     encodeCursor(curRow, curCol);
 
+    // 5250 input record format (IBM SA21-9247 §7.2 "Transmitting Data"):
+    //   [row][col][AID][SBA+data per MDT field...]
+    // row/col are 1-indexed, placed BEFORE the AID byte.
     std::vector<uint8_t> record;
-    record.push_back(aidCode);
     record.push_back(curRow);
     record.push_back(curCol);
+    record.push_back(aidCode);
 
     if (includeModifiedFields) {
         // Walk all cells; for each modified unprotected field, emit SBA + data
