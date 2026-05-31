@@ -1,18 +1,5 @@
 #include "KeyboardState5250.h"
 #include <algorithm>
-#include <cstdio>
-
-namespace {
-FILE* dbglog() {
-    static FILE* f = []{
-        FILE* h = fopen("/tmp/dx3270_5250.log", "w");
-        if (h) setvbuf(h, nullptr, _IOLBF, 0);
-        return h;
-    }();
-    return f;
-}
-#define DLOG(...) do { FILE* _f = dbglog(); if (_f) { fprintf(_f, __VA_ARGS__); } fprintf(stderr, __VA_ARGS__); } while (0)
-}
 
 namespace x3270 {
 
@@ -196,43 +183,21 @@ void KeyboardState5250::sendAID(uint8_t aidCode, bool includeModifiedFields) {
 // ── Key handlers ──────────────────────────────────────────────────────────────
 
 bool KeyboardState5250::handleChar(uint8_t asciiChar) {
-    int cur = screen_.cursorPos();
-    int fa  = screen_.findFieldStart(cur);
-    uint8_t faAttr = (fa >= 0) ? screen_.at(fa).attr : 0xFF;
-    uint8_t faDisp = (fa >= 0) ? screen_.at(fa).fgColor : 0xFF;
-    bool curIsFA = screen_.at(cur).isFA;
-    DLOG("[5250] handleChar('%c'=0x%02X) cur=%d locked=%d/%d "
-                    "curFA=%d fa=%d faAttr=0x%02X faDisp=0x%02X faLen=%u\n",
-            asciiChar, asciiChar, cur, (int)isLocked(), (int)lockReason_,
-            curIsFA, fa, faAttr, faDisp,
-            fa >= 0 ? (unsigned)screen_.at(fa).fieldLen : 0u);
     if (isLocked()) {
         if (lockReason_ == LockReason::System) lock(LockReason::OErr);
         return false;
     }
     if (!isCurrentFieldEditable()) {
-        DLOG("[5250]   -> reject: field not editable (faAttr=0x%02X)\n", faAttr);
         lock(LockReason::OErr);
         return false;
     }
     uint8_t ebcdic = codec_.fromAscii(asciiChar);
-    bool ok = insertCharAtCursor(ebcdic);
-    DLOG("[5250]   -> insertCharAtCursor returned %d, locked=%d/%d\n",
-         (int)ok, (int)isLocked(), (int)lockReason_);
-    return ok;
+    return insertCharAtCursor(ebcdic);
 }
 
 bool KeyboardState5250::handleTab(bool backward) {
-    int before = screen_.cursorPos();
-    if (isLocked()) { DLOG("[5250] Tab: locked\n"); return false; }
+    if (isLocked()) return false;
     advanceToNextField(!backward);
-    int after = screen_.cursorPos();
-    int fa = screen_.findFieldStart(after);
-    DLOG("[5250] Tab(back=%d) %d -> %d, fa=%d faAttr=0x%02X faDisp=0x%02X faLen=%u\n",
-         (int)backward, before, after, fa,
-         fa>=0?screen_.at(fa).attr:0xFF,
-         fa>=0?screen_.at(fa).fgColor:0xFF,
-         fa>=0?(unsigned)screen_.at(fa).fieldLen:0u);
     return true;
 }
 

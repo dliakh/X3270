@@ -1,18 +1,5 @@
 #include "DataStream5250Parser.h"
 #include <algorithm>
-#include <cstdio>
-
-namespace {
-FILE* parserlog() {
-    static FILE* f = []{
-        FILE* h = fopen("/tmp/dx3270_5250.log", "a");
-        if (h) setvbuf(h, nullptr, _IOLBF, 0);
-        return h;
-    }();
-    return f;
-}
-#define PLOG(...) do { FILE* _f = parserlog(); if (_f) fprintf(_f, __VA_ARGS__); fprintf(stderr, __VA_ARGS__); } while (0)
-}
 
 namespace x3270 {
 
@@ -124,8 +111,6 @@ void DataStream5250Parser::processRecord(const std::vector<uint8_t>& record) {
             if (i + 1 < len) {
                 uint8_t col = data[++i];
                 int offset = rowColToOffset(row, col);
-                PLOG("[5250] SBA(%u,%u) -> offset=%d bufPtrBefore=%d\n",
-                        row, col, offset, screen_.bufferPointer());
                 if (offset >= 0) screen_.setBufferAddress(offset);
             }
             state_ = ParseState::Data;
@@ -170,9 +155,6 @@ void DataStream5250Parser::processRecord(const std::vector<uint8_t>& record) {
             break;
         case ParseState::SF_LenLo: {
             uint16_t flen = (static_cast<uint16_t>(currentFieldLenHi_) << 8) | b;
-            PLOG("[5250] SF bufPtr=%d pendingAttr=0x%02X FFW1=0x%02X FFW2=0x%02X disp=0x%02X len=%u\n",
-                    screen_.bufferPointer(), pendingFieldAttr_, currentFFW1_, currentFFW2_,
-                    pending5250DisplayAttr_, flen);
             // Pass pending5250DisplayAttr_ as fgColor so the renderer can use the raw
             // 5250 display attr for colour mapping without losing the protection bits in attr.
             screen_.startField(pendingFieldAttr_, pending5250DisplayAttr_, 0x00, 0x00, flen);
@@ -418,14 +400,7 @@ void DataStream5250Parser::handleDataByte(uint8_t b) {
             // following cells until the next attribute byte or field.  Using a
             // dedicated FA cell ensures the renderer and findFieldStart() see it
             // as a sub-field boundary rather than a stray printable character.
-            int bp = screen_.bufferPointer();
-            bool wasFA = screen_.at(bp).isFA;
-            uint16_t prevLen = screen_.at(bp).fieldLen;
             screen_.startInlineAttr5250(b);
-            if (wasFA && prevLen > 0) {
-                PLOG("[5250] *** inline attr 0x%02X OVERWROTE SF FA at %d (had len=%u) ***\n",
-                     b, bp, prevLen);
-            }
         }
         // else: unrecognised control byte < 0x20 — skip silently
         break;

@@ -1,6 +1,6 @@
-# DX3270 — Free TN3270 Terminal Emulator for macOS
+# DX3270 — Free TN3270 & TN5250 Terminal Emulator for macOS
 
-A native macOS (ARM - Apple Silicon + Intel) TN3270/TN3270E/TN5250 terminal emulator for connecting to IBM Mainframes (z/OS, z/VM, z/VSE) and IBM i (AS/400, iSeries).  
+A native macOS (ARM - Apple Silicon + Intel) **TN3270E and TN5250** terminal emulator for connecting to IBM Mainframes (z/OS, z/VM, z/VSE) and IBM i (AS/400, iSeries) — from the same app, with the same native rendering pipeline.  
 Built entirely in C++ and Objective-C++ on top of native Cocoa, CoreText and OpenSSL.  
 **No license fee. No Java. No X11.**
 
@@ -16,7 +16,7 @@ There are a handful of free alternatives, but they either require Java (slow, ug
 
 So I built one from scratch. Native Cocoa. Native CoreText rendering. OpenSSL for TLS. Full TN3270E negotiation including ISPF Query Reply so the menus actually appear. It took a weekend of frustration and a lot of reading ancient IBM manuals — but the result is a clean, fast, free terminal that feels like it belongs on a Mac.
 
-If you work in Mainframe and you're tired of paying for the privilege, this is for you.
+If you work in Mainframe or IBM i and you're tired of paying for the privilege, this is for you.
 
 ---
 
@@ -25,6 +25,33 @@ If you work in Mainframe and you're tired of paying for the privilege, this is f
 ![ISPF Primary Option Menu running inside DX3270](screenshots/screenshot.png)
 
 *ISPF 8.1 Primary Option Menu on z/OS — connected to IBM ZExplore mainframe at 204.90.115.200:623*
+
+---
+
+## TN5250 — IBM i / AS400 Support
+
+Version 1.7.0 adds **full TN5250 protocol support** alongside the existing TN3270E engine. One app — two green screens.
+
+Select **TN5250** from the Protocol drop-down in the Connect dialog, point it at your IBM i (AS/400) host on port 23 (or your configured port), and you are in. The IBM i logon screen appears in the same Cocoa window you already know from 3270.
+
+### What works
+
+| Capability | Details |
+|---|---|
+| **GDS framing** | 10-byte GDS record header (length, class `0x12`, type `0xA0`, flags, opcode) decoded for every inbound record |
+| **Write To Display (WTD)** | Full command parser: SBA (Set Buffer Address), SF (Start Field with FFW1/FFW2/FCW pairs), RA (Repeat to Address), inline attribute bytes |
+| **Field attributes** | FFW1 bits mapped to 3270-style protection/MDT flags; inline attribute bytes (0x20–0x3F) create coloured sub-field markers without clobbering the governing input-field definition |
+| **IBM 5250 colour table** | Full 32-entry IBM SA21-9247 attribute table: Green / White / Red / Turquoise / Yellow / Pink / Blue with Reverse, Underline, Blink, NonDisplay, and Column-Separator modifiers |
+| **Non-display fields** | Password and other non-display fields (attr 0x27/0x2F/0x37/0x3F) rendered as blanks — characters are stored internally and transmitted correctly on Enter |
+| **Cursor & navigation** | Home, Tab/BackTab between unprotected input fields (inline attribute sub-fields correctly skipped), arrow keys, Escape = Attention |
+| **AID transmission** | SBA + data record sent for every modified unprotected field (MDT=1) on Enter; PF1–PF24, PA1–PA3 |
+| **Keyboard lock** | System lock while host processes input; OErr lock when typing in a protected field or past field-end; Escape resets |
+| **EBCDIC codec** | Shared codec with the 3270 engine — CP037/CP500/CP1047 all work |
+| **TLS** | Same OpenSSL transport layer as 3270 — connect encrypted with the same CA-bundle workflow |
+
+### 3270 not broken
+
+The two protocol engines are completely separate (`DataStream5250Parser` / `KeyboardState5250` vs. `DataStreamParser` / `KeyboardState`). Switching protocol in the Connect dialog tears down and re-creates the engine; the rendering path is shared. No 3270 regression.
 
 ---
 
@@ -68,10 +95,12 @@ The setting is saved and restored on every launch.
 
 | Feature | Details |
 |---|---|
-| **Protocol** | TN3270E (RFC 2355) with automatic fallback to classic TN3270 |
+| **Protocol** | TN3270E (RFC 2355) with automatic fallback to classic TN3270 **and** TN5250 for IBM i — selectable per connection |
 | **Security** | Plain Telnet **and** implicit TLS (TLS 1.2+) on any port |
 | **Screen models** | Model 2 (24 × 80) · Model 3 (32 × 80) · Model 4 (43 × 80) · Model 5 (27 × 132) · Large custom (62 × 160) — selectable per connection |
 | **EBCDIC code pages** | CP037 (US), CP500 (International), CP1047 (Open Systems) |
+| **5250 colours** | Full IBM SA21-9247 32-entry attribute table: Green, White, Red, Turquoise, Yellow, Pink, Blue + Reverse/Underline/Blink/NonDisplay/ColSep modifiers |
+| **5250 fields** | FFW-based field protection, inline attribute bytes, non-display password masking, MDT tracking, Tab/BackTab navigation |
 | **UI** | Native Cocoa window, green-on-black phosphor, 600 ms cursor blink |
 | **Keyboard** | PF1–PF24, PA1–PA3, Clear, Reset, Tab/BackTab, ErEOF, Insert, arrows |
 | **Query Reply** | Responds to IBM Structured Field Read Partition Query (required for ISPF); advertises GOCA graphics capability |
@@ -243,13 +272,27 @@ Then run `./package_intel.sh` or `./package_all.sh` as shown above.
 
 ## Version History
 
-### v1.7.0 — 2026-06-03
+### v1.7.0 — 2026-05-31
 
-**Add 5250 Protocol Parser**
+**Full TN5250 support — IBM i / AS400**
 
-- **5250 support** — A new `I5250Parser` class decodes the 5250 data stream used by IBM i (AS/400) hosts. It shares the same `ScreenBuffer` model and CoreText rendering pipeline as the 3270 parser, but implements the different command set and attribute model of 5250. The Connect dialog now includes a **Protocol** drop-down to select either TN3270E or TN5250.
+- **TN5250 session** (`TN5250Session`, `DataStream5250Parser`, `KeyboardState5250`) — complete TN5250 engine added alongside the existing TN3270E engine. Both protocols share the same `ScreenBuffer` model and CoreText rendering pipeline; switching is a single drop-down in the Connect dialog.
 
-- **5250 command support** — Implemented the core set of 5250 commands for screen updates, field attributes, cursor movement, and input handling. The parser translates 5250 orders into the shared `ScreenBuffer` model, allowing the existing rendering and input logic to work seamlessly with both protocols.
+- **GDS record framing** — 10-byte GDS header decoded; PUT_GET (0x03) and INVITE (0x01) opcodes immediately unlock the keyboard before processing stream content, matching IBM i behaviour.
+
+- **Write To Display parser** — SBA, SF (with FFW1/FFW2/FCW pairs and 5250 display attribute byte), RA, inline attribute bytes (0x20–0x3F), and WTD command flags all handled.
+
+- **Full IBM colour table** — All 32 entries of the IBM SA21-9247 5250 attribute table decoded: seven colours (Green, White, Red, Turquoise, Yellow, Pink, Blue) × modifiers (Normal, Reverse, Underline, Blink, NonDisplay, Column-Separator). Mapped to IBM 3279 CoreGraphics colours shared with the 3270 renderer.
+
+- **Non-display fields** — Password fields (attribute 0x27/0x2F/0x37/0x3F `NonDisplay` modifier) render as blank space; characters are stored in the buffer and transmitted correctly on AID.
+
+- **Inline attribute byte handling** — Inline attribute bytes within the data stream create sub-field colour markers without clobbering the governing SF field definition (including `fieldLen` and protection bits). This was the root cause of the password field being incorrectly classified as protected.
+
+- **AID transmission** — Outbound record format: `[row][col][AID][SBA+data per MDT field]`; trailing nulls trimmed. Enter, PF1–PF24, PA1–PA3 all generate correct AID codes per IBM SA21-9247.
+
+- **Keyboard** — Home (first unprotected field), Tab/BackTab (skips inline-attr sub-fields), arrow keys, Insert, Backspace/Delete, Erase Field (`⌥E`), Escape (Attention AID), Erase to End of Field.
+
+- **Keyboard lock** — System lock while host is processing; OErr on protected-field or field-overflow entry; Escape resets. Status bar shows ERR indicator on OErr.
 
 ### v1.6.0 — 2026-05-29
 
