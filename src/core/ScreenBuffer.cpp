@@ -70,6 +70,23 @@ void ScreenBuffer::resetAllMDT() {
     dirty_ = true;
 }
 
+void ScreenBuffer::setCursorToHome() {
+    // Walk cells in order and find the first FA cell that is editable (not protected,
+    // not bypass).  In 5250 mode, input fields have attr = ffw1ToAttr(FFW1) which
+    // leaves FA_PROTECTED(0x20) clear for normal input fields and sets it only for
+    // bypass fields.  In 3270 mode this finds the first unprotected field.
+    const int sz = rows_ * cols_;
+    for (int i = 0; i < sz; ++i) {
+        if (cells_[i].isFA && !cells_[i].isProtected()) {
+            // Set cursor to the first data position of this field (one past the FA cell)
+            cursorPos_ = (i + 1) % sz;
+            dirty_ = true;
+            return;
+        }
+    }
+    // No editable field found — leave cursor unchanged
+}
+
 void ScreenBuffer::writeChar(uint8_t ebcdic) {
     Cell& c     = cells_[bufPtr_];
     c.ch        = ebcdic;

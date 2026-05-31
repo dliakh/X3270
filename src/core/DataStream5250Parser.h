@@ -112,10 +112,12 @@ private:
     uint8_t  currentFFW1_    { 0 };
     uint8_t  currentFFW2_    { 0 };
     uint8_t  currentFieldLenHi_ { 0 };
-    uint8_t  pendingFieldAttr_  { 0 }; ///< Attr byte deferred until we have the length (SF_LenLo)
+    uint8_t  pendingFieldAttr_       { 0 }; ///< 3270-style attr (protection/MDT) deferred until SF_LenLo
+    uint8_t  pending5250DisplayAttr_ { 0 }; ///< Raw 5250 display attr byte (0x20-0x3F) for colour rendering
     uint8_t  pendingCC1_        { 0 }; ///< CC1 byte saved during WCC1 state for CC1 processing
     uint8_t  pendingCC2_        { 0 }; ///< CC2 byte saved; alarm/unlock fired after WTD data loop
     uint16_t wsfBodyLen_        { 0 }; ///< WSF body bytes remaining
+    bool     icOrderSeen_       { false }; ///< True if an explicit IC order was processed in this WTD
 
     void handleCommand(uint8_t cmd);
     void handleCC1(uint8_t cc1);

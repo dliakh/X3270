@@ -112,6 +112,11 @@ public:
     /// Clear MDT bit on all unprotected fields
     void resetAllMDT();
 
+    /// Move cursor to the first character of the first non-protected, non-bypass field.
+    /// Called by the 5250 parser when CC2 UNLOCK bit is set and no explicit IC order
+    /// was seen in the WTD data stream (mirrors tn5250_display_set_cursor_home).
+    void setCursorToHome();
+
     /// Set MDT on the field that owns the given buffer position
     void setMDT(int bufferPos);
 

@@ -18,6 +18,7 @@ void DataStream5250Parser::processRecord(const std::vector<uint8_t>& record) {
     state_ = ParseState::Command;
     sohRemaining_ = 0;
     tdRemaining_  = 0;
+    icOrderSeen_  = false;
 
     // Detect and strip GDS header.
     // Java-confirmed format (XI5250Emulator.receivedEOR):
@@ -123,7 +124,8 @@ void DataStream5250Parser::processRecord(const std::vector<uint8_t>& record) {
                 state_ = ParseState::SF_FFW2;
             } else {
                 // No FFW — b IS the attribute byte (output-only / protected field)
-                pendingFieldAttr_ = b;
+                pendingFieldAttr_       = b;  // has FA_PROTECTED(0x20) always set → isProtected()=true
+                pending5250DisplayAttr_ = b;  // raw 5250 display attr for colour rendering
                 state_ = ParseState::SF_LenHi;
             }
             break;
@@ -136,8 +138,11 @@ void DataStream5250Parser::processRecord(const std::vector<uint8_t>& record) {
                 // FCW1 — consume FCW2 and loop
                 state_ = ParseState::SF_FCW2;
             } else {
-                // b is the attribute byte; map FFW1 → ScreenBuffer attr
-                pendingFieldAttr_ = ffw1ToAttr(currentFFW1_);
+                // b is the 5250 display attribute byte (0x20-0x3F).
+                // Store FFW1-derived 3270-style protection bits in attr (for isProtected()),
+                // and the actual 5250 display byte in fgColor (for colour rendering).
+                pendingFieldAttr_       = ffw1ToAttr(currentFFW1_);
+                pending5250DisplayAttr_ = b;
                 state_ = ParseState::SF_LenHi;
             }
             break;
@@ -150,7 +155,9 @@ void DataStream5250Parser::processRecord(const std::vector<uint8_t>& record) {
             break;
         case ParseState::SF_LenLo: {
             uint16_t flen = (static_cast<uint16_t>(currentFieldLenHi_) << 8) | b;
-            screen_.startField(pendingFieldAttr_, 0x00, 0x00, 0x00, flen);
+            // Pass pending5250DisplayAttr_ as fgColor so the renderer can use the raw
+            // 5250 display attr for colour mapping without losing the protection bits in attr.
+            screen_.startField(pendingFieldAttr_, pending5250DisplayAttr_, 0x00, 0x00, flen);
             state_ = ParseState::Data;
             break;
         }
@@ -217,7 +224,10 @@ void DataStream5250Parser::processRecord(const std::vector<uint8_t>& record) {
             // IC sets the insert-cursor (pending cursor position after WTD completes).
             // The reference calls set_pending_insert which sets cursorPos.
             int dest = rowColToOffset(raRow_, b);
-            if (dest >= 0) screen_.setCursor(dest);
+            if (dest >= 0) {
+                screen_.setCursor(dest);
+                icOrderSeen_ = true; // suppress cursor-home in deferred CC2 handling
+            }
             state_ = ParseState::Data;
             break;
         }
@@ -251,7 +261,13 @@ void DataStream5250Parser::processRecord(const std::vector<uint8_t>& record) {
     // (CC2 alarm/unlock apply after the WTD data stream ends.)
     if (state_ == ParseState::Data || state_ == ParseState::Command) {
         if (pendingCC2_ & 0x04) { if (alarmCb_)  alarmCb_(); }
-        if (pendingCC2_ & 0x08) { if (unlockCb_) unlockCb_(); }
+        if (pendingCC2_ & 0x08) {
+            if (unlockCb_) unlockCb_();
+            // CC2 UNLOCK bit set: move cursor to first editable field when no explicit
+            // IC order was seen in this WTD — matches tn5250_display_set_cursor_home()
+            // behavior in the reference (session.c tn5250_session_write_to_display).
+            if (!icOrderSeen_) screen_.setCursorToHome();
+        }
         pendingCC2_ = 0;
     }
 }

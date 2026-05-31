@@ -254,10 +254,17 @@ static NSColor *colorFor5250Attr(uint8_t attr) {
             // Priority: per-cell SA extended colour > FA-attribute default colour
             NSColor *fg;
             if (_kbd5250 != nil) {
-                // 5250 mode: resolve colour from the FA cell governing this position
+                // 5250 mode: resolve colour from the raw 5250 display attr stored in
+                // the FA cell's fgColor (set by SF order parsing in DataStream5250Parser).
+                // Using fgColor (not attr) avoids confusion with the 3270-style protection
+                // bits stored in attr.
                 int faIdx = _screen->findFieldStart(pos);
-                uint8_t faAttr = (faIdx >= 0) ? _screen->at(faIdx).attr : 0x20;
-                fg = colorFor5250Attr(faAttr);
+                uint8_t dispAttr = (faIdx >= 0) ? _screen->at(faIdx).fgColor : 0x20;
+                if (dispAttr == 0x00) dispAttr = 0x20; // fallback to default green
+                // Non-display fields (password masking): attr & 0x3E == 0x26 or 0x2E
+                uint8_t masked = dispAttr & 0x3E;
+                if (masked == 0x26 || masked == 0x2E) continue;
+                fg = colorFor5250Attr(dispAttr);
             } else if (cell.fgColor != 0x00) {
                 fg = colorFor3270Code(cell.fgColor) ?: _foregroundColor;
             } else {
