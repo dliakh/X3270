@@ -121,16 +121,22 @@ void ScreenBuffer::startInlineAttr5250(uint8_t attrByte5250) {
     // Inline 5250 attribute byte (0x20-0x3F) — starts an output-only sub-field.
     // Marked FA_PROTECTED so the cursor / input handlers won't treat the area as
     // editable.  fgColor stores the raw 5250 attr byte for the renderer.
-    Cell& c     = cells_[bufPtr_];
-    c.ch        = 0x00;
-    c.attr      = FA_PROTECTED;
-    c.isFA      = true;
-    c.fgColor   = (attrByte5250 >= 0x20 && attrByte5250 <= 0x3F) ? attrByte5250 : 0x20;
-    c.bgColor   = 0x00;
-    c.highlight = 0x00;
-    c.fieldLen  = 0;
-    currentAttr_      = FA_PROTECTED;
-    currentFgColor_   = c.fgColor;
+    uint8_t safe = (attrByte5250 >= 0x20 && attrByte5250 <= 0x3F) ? attrByte5250 : 0x20;
+    Cell& c = cells_[bufPtr_];
+    // If the host re-positions onto an existing SF FA and emits an inline attribute,
+    // do NOT clobber the field definition — preserve fieldLen / protection bits and
+    // simply update the renderer-side colour state for following cells.
+    if (!(c.isFA && c.fieldLen > 0)) {
+        c.ch        = 0x00;
+        c.attr      = FA_PROTECTED;
+        c.isFA      = true;
+        c.fgColor   = safe;
+        c.bgColor   = 0x00;
+        c.highlight = 0x00;
+        c.fieldLen  = 0;
+    }
+    currentAttr_      = c.attr;
+    currentFgColor_   = safe;
     currentBgColor_   = 0x00;
     currentHighlight_ = 0x00;
     bufPtr_ = clamp(bufPtr_ + 1);
