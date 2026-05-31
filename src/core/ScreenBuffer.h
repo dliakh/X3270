@@ -77,6 +77,14 @@ public:
                     uint8_t highlight = 0x00,
                     uint16_t fieldLen = 0);
 
+    /// Place an inline 5250 display-attribute byte (0x20-0x3F) at the current
+    /// buffer pointer. The attribute occupies a buffer position (rendered as a
+    /// blank) and governs all subsequent cells until the next attribute/field.
+    /// The cell is marked protected by default — input fields are introduced
+    /// only via Start-of-Field orders (which call startField() with FFW-derived
+    /// attr bits).
+    void startInlineAttr5250(uint8_t attrByte5250);
+
     /// Update the "current" SA-order colour/highlight applied to subsequent writeChar calls.
     void setCurrentFgColor(uint8_t c)   { currentFgColor_   = c; }
     void setCurrentBgColor(uint8_t c)   { currentBgColor_   = c; }

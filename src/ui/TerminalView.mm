@@ -52,34 +52,100 @@ static NSColor *colorFor3270Code(uint8_t code) {
     }
 }
 
-// Maps a 5250 field-attribute byte (0x20-0x3F) to a foreground NSColor.
-// IBM 5250 display attributes: bits [4:2] encode colour/highlight.
-//   0x20 = Green          0x21 = Green/Reverse        0x22 = White
-//   0x23 = White/Reverse  0x24 = Green/Underline       0x25 = Green/Reverse/Underline
-//   0x26 = Non-display    0x27 = Non-display           0x28 = Red
-//   0x29 = Red/Reverse    0x2A = Red/Underline         0x2B = Red/Reverse/Underline
-//   0x2C = Intensified/White  0x2D = Intensified/White/Reverse  ...
+// IBM 5250 display attribute decoding (per IBM 5250 Functions Reference,
+// SA21-9247, §15 "Display Attributes").  Each attribute byte 0x20-0x3F
+// encodes a base colour plus modifier flags (reverse, underline, blink,
+// non-display, column-separator).  The full 32-entry table:
+//
+//   0x20 Green                 0x30 Turquoise/CS
+//   0x21 Green RI              0x31 Turquoise/CS RI
+//   0x22 White                 0x32 Yellow/CS
+//   0x23 White RI              0x33 Yellow/CS RI
+//   0x24 Green UL              0x34 Turquoise UL
+//   0x25 Green UL RI           0x35 Turquoise UL RI
+//   0x26 White UL              0x36 Yellow UL
+//   0x27 Non-display           0x37 Non-display
+//   0x28 Red                   0x38 Pink
+//   0x29 Red RI                0x39 Pink RI
+//   0x2A Red UL                0x3A Blue
+//   0x2B Red UL RI             0x3B Blue RI
+//   0x2C Red RI BL             0x3C Pink UL
+//   0x2D Red BL                0x3D Pink UL RI
+//   0x2E Red UL BL             0x3E Blue UL
+//   0x2F Non-display           0x3F Non-display
+
+typedef NS_OPTIONS(uint8_t, X5250Modifier) {
+    X5250ModNone      = 0,
+    X5250ModReverse   = 1 << 0,
+    X5250ModUnderline = 1 << 1,
+    X5250ModBlink     = 1 << 2,
+    X5250ModNonDisp   = 1 << 3,
+    X5250ModColSep    = 1 << 4,
+};
+
+typedef NS_ENUM(uint8_t, X5250Color) {
+    X5250ColorGreen,
+    X5250ColorWhite,
+    X5250ColorRed,
+    X5250ColorTurquoise,
+    X5250ColorYellow,
+    X5250ColorPink,
+    X5250ColorBlue,
+};
+
+static void decode5250Attr(uint8_t attr, X5250Color *outColor, uint8_t *outMod) {
+    static const struct { X5250Color color; uint8_t mod; } kTable[32] = {
+        /*0x20*/ { X5250ColorGreen,     X5250ModNone },
+        /*0x21*/ { X5250ColorGreen,     X5250ModReverse },
+        /*0x22*/ { X5250ColorWhite,     X5250ModNone },
+        /*0x23*/ { X5250ColorWhite,     X5250ModReverse },
+        /*0x24*/ { X5250ColorGreen,     X5250ModUnderline },
+        /*0x25*/ { X5250ColorGreen,     X5250ModUnderline | X5250ModReverse },
+        /*0x26*/ { X5250ColorWhite,     X5250ModUnderline },
+        /*0x27*/ { X5250ColorGreen,     X5250ModNonDisp },
+        /*0x28*/ { X5250ColorRed,       X5250ModNone },
+        /*0x29*/ { X5250ColorRed,       X5250ModReverse },
+        /*0x2A*/ { X5250ColorRed,       X5250ModUnderline },
+        /*0x2B*/ { X5250ColorRed,       X5250ModUnderline | X5250ModReverse },
+        /*0x2C*/ { X5250ColorRed,       X5250ModReverse | X5250ModBlink },
+        /*0x2D*/ { X5250ColorRed,       X5250ModBlink },
+        /*0x2E*/ { X5250ColorRed,       X5250ModUnderline | X5250ModBlink },
+        /*0x2F*/ { X5250ColorGreen,     X5250ModNonDisp },
+        /*0x30*/ { X5250ColorTurquoise, X5250ModColSep },
+        /*0x31*/ { X5250ColorTurquoise, X5250ModColSep | X5250ModReverse },
+        /*0x32*/ { X5250ColorYellow,    X5250ModColSep },
+        /*0x33*/ { X5250ColorYellow,    X5250ModColSep | X5250ModReverse },
+        /*0x34*/ { X5250ColorTurquoise, X5250ModUnderline },
+        /*0x35*/ { X5250ColorTurquoise, X5250ModUnderline | X5250ModReverse },
+        /*0x36*/ { X5250ColorYellow,    X5250ModUnderline },
+        /*0x37*/ { X5250ColorGreen,     X5250ModNonDisp },
+        /*0x38*/ { X5250ColorPink,      X5250ModNone },
+        /*0x39*/ { X5250ColorPink,      X5250ModReverse },
+        /*0x3A*/ { X5250ColorBlue,      X5250ModNone },
+        /*0x3B*/ { X5250ColorBlue,      X5250ModReverse },
+        /*0x3C*/ { X5250ColorPink,      X5250ModUnderline },
+        /*0x3D*/ { X5250ColorPink,      X5250ModUnderline | X5250ModReverse },
+        /*0x3E*/ { X5250ColorBlue,      X5250ModUnderline },
+        /*0x3F*/ { X5250ColorGreen,     X5250ModNonDisp },
+    };
+    uint8_t idx = (attr - 0x20) & 0x1F;
+    if (outColor) *outColor = kTable[idx].color;
+    if (outMod)   *outMod   = kTable[idx].mod;
+}
+
 static NSColor *colorFor5250Attr(uint8_t attr) {
-    switch (attr & 0x3E) {  // bits [5:1] carry the colour+modifier info
-    case 0x20: case 0x24:                // Green, Green+Underline
-        return [NSColor colorWithRed:0.20 green:0.85 blue:0.20 alpha:1.0];
-    case 0x22: case 0x26:                // White, Non-display → treat as white
-        return [NSColor colorWithRed:0.85 green:0.85 blue:0.85 alpha:1.0];
-    case 0x28: case 0x2A:                // Red, Red+Underline
-        return [NSColor colorWithRed:1.00 green:0.33 blue:0.33 alpha:1.0];
-    case 0x2C: case 0x2E:                // Intensified / Cyan
-        return [NSColor colorWithRed:0.20 green:0.85 blue:0.85 alpha:1.0];
-    case 0x30: case 0x32:                // Yellow
-        return [NSColor colorWithRed:0.85 green:0.85 blue:0.20 alpha:1.0];
-    case 0x34: case 0x36:                // Pink/Magenta
-        return [NSColor colorWithRed:1.00 green:0.44 blue:1.00 alpha:1.0];
-    case 0x38: case 0x3A:                // Blue
-        return [NSColor colorWithRed:0.22 green:0.52 blue:1.00 alpha:1.0];
-    case 0x3C: case 0x3E:                // Turquoise
-        return [NSColor colorWithRed:0.20 green:0.85 blue:0.85 alpha:1.0];
-    default:   // also reverse-video variants — return base green
-        return [NSColor colorWithRed:0.20 green:0.85 blue:0.20 alpha:1.0];
+    X5250Color c;
+    decode5250Attr(attr, &c, NULL);
+    switch (c) {
+    case X5250ColorGreen:     return [NSColor colorWithRed:0.20 green:0.85 blue:0.20 alpha:1.0];
+    case X5250ColorWhite:     return [NSColor colorWithRed:0.85 green:0.85 blue:0.85 alpha:1.0];
+    case X5250ColorRed:       return [NSColor colorWithRed:1.00 green:0.33 blue:0.33 alpha:1.0];
+    case X5250ColorTurquoise: return [NSColor colorWithRed:0.20 green:0.85 blue:0.85 alpha:1.0];
+    case X5250ColorYellow:    return [NSColor colorWithRed:0.95 green:0.95 blue:0.30 alpha:1.0];
+    case X5250ColorPink:      return [NSColor colorWithRed:1.00 green:0.44 blue:1.00 alpha:1.0];
+    case X5250ColorBlue:      return [NSColor colorWithRed:0.22 green:0.52 blue:1.00 alpha:1.0];
     }
+    return [NSColor colorWithRed:0.20 green:0.85 blue:0.20 alpha:1.0];
 }
 
 @implementation TerminalView {
@@ -253,18 +319,23 @@ static NSColor *colorFor5250Attr(uint8_t attr) {
             // ── Foreground colour ─────────────────────────────────────────────
             // Priority: per-cell SA extended colour > FA-attribute default colour
             NSColor *fg;
+            BOOL    is5250Reverse   = NO;
+            BOOL    is5250Underline = NO;
             if (_kbd5250 != nil) {
                 // 5250 mode: resolve colour from the raw 5250 display attr stored in
-                // the FA cell's fgColor (set by SF order parsing in DataStream5250Parser).
-                // Using fgColor (not attr) avoids confusion with the 3270-style protection
-                // bits stored in attr.
+                // the FA cell's fgColor (set by SF order parsing in DataStream5250Parser
+                // and by inline attribute bytes in the data stream).
                 int faIdx = _screen->findFieldStart(pos);
                 uint8_t dispAttr = (faIdx >= 0) ? _screen->at(faIdx).fgColor : 0x20;
-                if (dispAttr == 0x00) dispAttr = 0x20; // fallback to default green
-                // Non-display fields (password masking): attr & 0x3E == 0x26 or 0x2E
-                uint8_t masked = dispAttr & 0x3E;
-                if (masked == 0x26 || masked == 0x2E) continue;
+                if (dispAttr < 0x20 || dispAttr > 0x3F) dispAttr = 0x20;
+                X5250Color base5250;
+                uint8_t    mod5250;
+                decode5250Attr(dispAttr, &base5250, &mod5250);
+                // Non-display fields (password masking)
+                if (mod5250 & X5250ModNonDisp) continue;
                 fg = colorFor5250Attr(dispAttr);
+                is5250Reverse   = (mod5250 & X5250ModReverse)   != 0;
+                is5250Underline = (mod5250 & X5250ModUnderline) != 0;
             } else if (cell.fgColor != 0x00) {
                 fg = colorFor3270Code(cell.fgColor) ?: _foregroundColor;
             } else {
@@ -286,7 +357,7 @@ static NSColor *colorFor5250Attr(uint8_t attr) {
                 : _backgroundColor;
 
             // ── Reverse-video highlight (0xF2) ────────────────────────────────
-            if (cell.highlight == 0xF2) {
+            if (cell.highlight == 0xF2 || is5250Reverse) {
                 NSColor *tmp = fg; fg = bg; bg = tmp;
             }
 
@@ -312,7 +383,7 @@ static NSColor *colorFor5250Attr(uint8_t attr) {
             }
 
             // ── Underscore highlight (0xF4) ───────────────────────────────────
-            if (cell.highlight == 0xF4) {
+            if (cell.highlight == 0xF4 || is5250Underline) {
                 [fg setStroke];
                 NSBezierPath *line = [NSBezierPath bezierPath];
                 [line setLineWidth:1.0];

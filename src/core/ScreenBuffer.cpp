@@ -117,6 +117,26 @@ void ScreenBuffer::startField(uint8_t attrByte, uint8_t fgColor, uint8_t bgColor
     dirty_ = true;
 }
 
+void ScreenBuffer::startInlineAttr5250(uint8_t attrByte5250) {
+    // Inline 5250 attribute byte (0x20-0x3F) — starts an output-only sub-field.
+    // Marked FA_PROTECTED so the cursor / input handlers won't treat the area as
+    // editable.  fgColor stores the raw 5250 attr byte for the renderer.
+    Cell& c     = cells_[bufPtr_];
+    c.ch        = 0x00;
+    c.attr      = FA_PROTECTED;
+    c.isFA      = true;
+    c.fgColor   = (attrByte5250 >= 0x20 && attrByte5250 <= 0x3F) ? attrByte5250 : 0x20;
+    c.bgColor   = 0x00;
+    c.highlight = 0x00;
+    c.fieldLen  = 0;
+    currentAttr_      = FA_PROTECTED;
+    currentFgColor_   = c.fgColor;
+    currentBgColor_   = 0x00;
+    currentHighlight_ = 0x00;
+    bufPtr_ = clamp(bufPtr_ + 1);
+    dirty_ = true;
+}
+
 void ScreenBuffer::repeatToAddress(int destOffset, uint8_t ebcdic) {
     int dest = clamp(destOffset);
     while (bufPtr_ != dest) {

@@ -395,10 +395,12 @@ void DataStream5250Parser::handleDataByte(uint8_t b) {
             // Normal EBCDIC display character
             screen_.writeChar(b);
         } else if (b >= 0x20) {
-            // Colour/attribute byte in range 0x20-0x3F.
-            // These are 5250 attribute characters that occupy a buffer position.
-            // For now write them as the attribute byte (renderer will color-map).
-            screen_.writeChar(b);
+            // Inline 5250 display attribute byte (0x20-0x3F): occupies a buffer
+            // position (rendered as blank) and changes color/highlight for the
+            // following cells until the next attribute byte or field.  Using a
+            // dedicated FA cell ensures the renderer and findFieldStart() see it
+            // as a sub-field boundary rather than a stray printable character.
+            screen_.startInlineAttr5250(b);
         }
         // else: unrecognised control byte < 0x20 — skip silently
         break;
