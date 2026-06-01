@@ -6,6 +6,7 @@
 #include <memory>
 #include "TLSTransport.h"
 #include "TerminalModel.h"
+#include "ITerminalSession.h"
 
 namespace x3270 {
 
@@ -47,7 +48,7 @@ static constexpr uint8_t DT_UNBIND     = 0x04;
 static constexpr uint8_t DT_NVT_DATA   = 0x05;
 
 // ── TN3270Session ─────────────────────────────────────────────────────────────
-class TN3270Session {
+class TN3270Session : public ITerminalSession {
 public:
     enum class State {
         Disconnected,
@@ -67,15 +68,15 @@ public:
     using TrafficCallback   = std::function<void(bool tx, const std::vector<uint8_t>&)>;
 
     TN3270Session();
-    ~TN3270Session();
+    ~TN3270Session() override;
 
     TN3270Session(const TN3270Session&) = delete;
     TN3270Session& operator=(const TN3270Session&) = delete;
 
-    void setDataCallback(DataCallback cb)           { dataCb_      = std::move(cb); }
-    void setConnectedCallback(ConnectedCallback cb) { connectedCb_ = std::move(cb); }
-    void setErrorCallback(ErrorCallback cb)         { errorCb_     = std::move(cb); }
-    void setTrafficCallback(TrafficCallback cb)     { trafficCb_   = std::move(cb); }
+    void setDataCallback(DataCallback cb)           override { dataCb_      = std::move(cb); }
+    void setConnectedCallback(ConnectedCallback cb) override { connectedCb_ = std::move(cb); }
+    void setErrorCallback(ErrorCallback cb)         override { errorCb_     = std::move(cb); }
+    void setTrafficCallback(TrafficCallback cb)     override { trafficCb_   = std::move(cb); }
 
     /// Set the terminal model before calling connect().
     /// Determines the DEVICE-TYPE string sent during TN3270E negotiation.
@@ -85,21 +86,23 @@ public:
     /// complete or an error occurs (intended to be called from a background thread).
     bool connect(const std::string& host, uint16_t port,
                  bool useTLS,
-                 const std::string& caBundle = {});
+                 const std::string& caBundle = {}) override;
 
-    void disconnect();
-    bool isConnected()    const { return state_ == State::Connected; }
+    void disconnect() override;
+    bool isConnected()    const override { return state_ == State::Connected; }
     bool tn3270eActive()  const { return tn3270eMode_; }
     State state()         const { return state_; }
+
+    void readLoop() override;
 
     /// Send a 3270 aid record to the host (raw 3270 bytes, before Telnet escaping).
     bool send3270Record(const std::vector<uint8_t>& record);
 
+    /// ITerminalSession::sendRecord — delegates to send3270Record.
+    bool sendRecord(const std::vector<uint8_t>& record) override { return send3270Record(record); }
+
     /// Send Telnet IAC IP (ATTN key).
     bool sendATTN();
-
-    /// Read loop — call from the background thread after connect().
-    void readLoop();
 
 private:
     // Telnet IAC FSM

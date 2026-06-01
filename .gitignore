@@ -9,6 +9,7 @@ build_output.txt
 
 # TestTools
 mocksvr/
+testimpl/
 
 # macOS
 .DS_Store

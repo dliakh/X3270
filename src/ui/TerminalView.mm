@@ -52,11 +52,108 @@ static NSColor *colorFor3270Code(uint8_t code) {
     }
 }
 
+// IBM 5250 display attribute decoding (per IBM 5250 Functions Reference,
+// SA21-9247, §15 "Display Attributes").  Each attribute byte 0x20-0x3F
+// encodes a base colour plus modifier flags (reverse, underline, blink,
+// non-display, column-separator).  The full 32-entry table:
+//
+//   0x20 Green                 0x30 Turquoise/CS
+//   0x21 Green RI              0x31 Turquoise/CS RI
+//   0x22 White                 0x32 Yellow/CS
+//   0x23 White RI              0x33 Yellow/CS RI
+//   0x24 Green UL              0x34 Turquoise UL
+//   0x25 Green UL RI           0x35 Turquoise UL RI
+//   0x26 White UL              0x36 Yellow UL
+//   0x27 Non-display           0x37 Non-display
+//   0x28 Red                   0x38 Pink
+//   0x29 Red RI                0x39 Pink RI
+//   0x2A Red UL                0x3A Blue
+//   0x2B Red UL RI             0x3B Blue RI
+//   0x2C Red RI BL             0x3C Pink UL
+//   0x2D Red BL                0x3D Pink UL RI
+//   0x2E Red UL BL             0x3E Blue UL
+//   0x2F Non-display           0x3F Non-display
+
+typedef NS_OPTIONS(uint8_t, X5250Modifier) {
+    X5250ModNone      = 0,
+    X5250ModReverse   = 1 << 0,
+    X5250ModUnderline = 1 << 1,
+    X5250ModBlink     = 1 << 2,
+    X5250ModNonDisp   = 1 << 3,
+    X5250ModColSep    = 1 << 4,
+};
+
+typedef NS_ENUM(uint8_t, X5250Color) {
+    X5250ColorGreen,
+    X5250ColorWhite,
+    X5250ColorRed,
+    X5250ColorTurquoise,
+    X5250ColorYellow,
+    X5250ColorPink,
+    X5250ColorBlue,
+};
+
+static void decode5250Attr(uint8_t attr, X5250Color *outColor, uint8_t *outMod) {
+    static const struct { X5250Color color; uint8_t mod; } kTable[32] = {
+        /*0x20*/ { X5250ColorGreen,     X5250ModNone },
+        /*0x21*/ { X5250ColorGreen,     X5250ModReverse },
+        /*0x22*/ { X5250ColorWhite,     X5250ModNone },
+        /*0x23*/ { X5250ColorWhite,     X5250ModReverse },
+        /*0x24*/ { X5250ColorGreen,     X5250ModUnderline },
+        /*0x25*/ { X5250ColorGreen,     X5250ModUnderline | X5250ModReverse },
+        /*0x26*/ { X5250ColorWhite,     X5250ModUnderline },
+        /*0x27*/ { X5250ColorGreen,     X5250ModNonDisp },
+        /*0x28*/ { X5250ColorRed,       X5250ModNone },
+        /*0x29*/ { X5250ColorRed,       X5250ModReverse },
+        /*0x2A*/ { X5250ColorRed,       X5250ModUnderline },
+        /*0x2B*/ { X5250ColorRed,       X5250ModUnderline | X5250ModReverse },
+        /*0x2C*/ { X5250ColorRed,       X5250ModReverse | X5250ModBlink },
+        /*0x2D*/ { X5250ColorRed,       X5250ModBlink },
+        /*0x2E*/ { X5250ColorRed,       X5250ModUnderline | X5250ModBlink },
+        /*0x2F*/ { X5250ColorGreen,     X5250ModNonDisp },
+        /*0x30*/ { X5250ColorTurquoise, X5250ModColSep },
+        /*0x31*/ { X5250ColorTurquoise, X5250ModColSep | X5250ModReverse },
+        /*0x32*/ { X5250ColorYellow,    X5250ModColSep },
+        /*0x33*/ { X5250ColorYellow,    X5250ModColSep | X5250ModReverse },
+        /*0x34*/ { X5250ColorTurquoise, X5250ModUnderline },
+        /*0x35*/ { X5250ColorTurquoise, X5250ModUnderline | X5250ModReverse },
+        /*0x36*/ { X5250ColorYellow,    X5250ModUnderline },
+        /*0x37*/ { X5250ColorGreen,     X5250ModNonDisp },
+        /*0x38*/ { X5250ColorPink,      X5250ModNone },
+        /*0x39*/ { X5250ColorPink,      X5250ModReverse },
+        /*0x3A*/ { X5250ColorBlue,      X5250ModNone },
+        /*0x3B*/ { X5250ColorBlue,      X5250ModReverse },
+        /*0x3C*/ { X5250ColorPink,      X5250ModUnderline },
+        /*0x3D*/ { X5250ColorPink,      X5250ModUnderline | X5250ModReverse },
+        /*0x3E*/ { X5250ColorBlue,      X5250ModUnderline },
+        /*0x3F*/ { X5250ColorGreen,     X5250ModNonDisp },
+    };
+    uint8_t idx = (attr - 0x20) & 0x1F;
+    if (outColor) *outColor = kTable[idx].color;
+    if (outMod)   *outMod   = kTable[idx].mod;
+}
+
+static NSColor *colorFor5250Attr(uint8_t attr) {
+    X5250Color c;
+    decode5250Attr(attr, &c, NULL);
+    switch (c) {
+    case X5250ColorGreen:     return [NSColor colorWithRed:0.20 green:0.85 blue:0.20 alpha:1.0];
+    case X5250ColorWhite:     return [NSColor colorWithRed:0.85 green:0.85 blue:0.85 alpha:1.0];
+    case X5250ColorRed:       return [NSColor colorWithRed:1.00 green:0.33 blue:0.33 alpha:1.0];
+    case X5250ColorTurquoise: return [NSColor colorWithRed:0.20 green:0.85 blue:0.85 alpha:1.0];
+    case X5250ColorYellow:    return [NSColor colorWithRed:0.95 green:0.95 blue:0.30 alpha:1.0];
+    case X5250ColorPink:      return [NSColor colorWithRed:1.00 green:0.44 blue:1.00 alpha:1.0];
+    case X5250ColorBlue:      return [NSColor colorWithRed:0.22 green:0.52 blue:1.00 alpha:1.0];
+    }
+    return [NSColor colorWithRed:0.20 green:0.85 blue:0.20 alpha:1.0];
+}
+
 @implementation TerminalView {
-    x3270::ScreenBuffer*    _screen;
-    x3270::KeyboardState*   _kbd;
-    x3270::GraphicsBuffer*  _graphics;   // GOCA drawing command list (may be nil)
-    x3270::EbcdicCodec      _codec;
+    x3270::ScreenBuffer*      _screen;
+    x3270::KeyboardState*     _kbd;     // TN3270 keyboard (nil in 5250 mode)
+    x3270::KeyboardState5250* _kbd5250; // TN5250 keyboard (nil in 3270 mode)
+    x3270::GraphicsBuffer*    _graphics;   // GOCA drawing command list (3270 only)
+    x3270::EbcdicCodec        _codec;
 
     NSTimer* _cursorTimer;
     BOOL     _cursorVisible;
@@ -157,8 +254,20 @@ static NSColor *colorFor3270Code(uint8_t code) {
 
 - (void)setScreenBuffer:(x3270::ScreenBuffer*)screen
           keyboardState:(x3270::KeyboardState*)kbd {
-    _screen = screen;
-    _kbd    = kbd;
+    _screen  = screen;
+    _kbd     = kbd;
+    _kbd5250 = nullptr;
+    if (screen) {
+        _rows = screen->rows();
+        _cols = screen->cols();
+    }
+}
+
+- (void)setScreenBuffer:(x3270::ScreenBuffer*)screen
+      keyboardState5250:(x3270::KeyboardState5250*)kbd {
+    _screen  = screen;
+    _kbd     = nullptr;
+    _kbd5250 = kbd;
     if (screen) {
         _rows = screen->rows();
         _cols = screen->cols();
@@ -210,7 +319,24 @@ static NSColor *colorFor3270Code(uint8_t code) {
             // ── Foreground colour ─────────────────────────────────────────────
             // Priority: per-cell SA extended colour > FA-attribute default colour
             NSColor *fg;
-            if (cell.fgColor != 0x00) {
+            BOOL    is5250Reverse   = NO;
+            BOOL    is5250Underline = NO;
+            if (_kbd5250 != nil) {
+                // 5250 mode: resolve colour from the raw 5250 display attr stored in
+                // the FA cell's fgColor (set by SF order parsing in DataStream5250Parser
+                // and by inline attribute bytes in the data stream).
+                int faIdx = _screen->findFieldStart(pos);
+                uint8_t dispAttr = (faIdx >= 0) ? _screen->at(faIdx).fgColor : 0x20;
+                if (dispAttr < 0x20 || dispAttr > 0x3F) dispAttr = 0x20;
+                X5250Color base5250;
+                uint8_t    mod5250;
+                decode5250Attr(dispAttr, &base5250, &mod5250);
+                // Non-display fields (password masking)
+                if (mod5250 & X5250ModNonDisp) continue;
+                fg = colorFor5250Attr(dispAttr);
+                is5250Reverse   = (mod5250 & X5250ModReverse)   != 0;
+                is5250Underline = (mod5250 & X5250ModUnderline) != 0;
+            } else if (cell.fgColor != 0x00) {
                 fg = colorFor3270Code(cell.fgColor) ?: _foregroundColor;
             } else {
                 // DEFCOLOR_MAP: index 0-3 from protected (bit5) + intensified (bit3)
@@ -231,7 +357,7 @@ static NSColor *colorFor3270Code(uint8_t code) {
                 : _backgroundColor;
 
             // ── Reverse-video highlight (0xF2) ────────────────────────────────
-            if (cell.highlight == 0xF2) {
+            if (cell.highlight == 0xF2 || is5250Reverse) {
                 NSColor *tmp = fg; fg = bg; bg = tmp;
             }
 
@@ -257,7 +383,7 @@ static NSColor *colorFor3270Code(uint8_t code) {
             }
 
             // ── Underscore highlight (0xF4) ───────────────────────────────────
-            if (cell.highlight == 0xF4) {
+            if (cell.highlight == 0xF4 || is5250Underline) {
                 [fg setStroke];
                 NSBezierPath *line = [NSBezierPath bezierPath];
                 [line setLineWidth:1.0];
@@ -461,22 +587,20 @@ static constexpr CGFloat kGocaCellH = 12.0; // must match AH in buildQueryReply(
     NSString *statusStr = @"";
     if (_kbd) {
         switch (_kbd->lockReason()) {
-        case x3270::KeyboardState::LockReason::None:
-            statusStr = @"";
-            break;
-        case x3270::KeyboardState::LockReason::Connecting:
-            statusStr = @"Connecting...";
-            break;
-        case x3270::KeyboardState::LockReason::System:
-            statusStr = @"X SYS";
-            break;
-        case x3270::KeyboardState::LockReason::OErr:
-            statusStr = @"X OERR";
-            break;
+        case x3270::KeyboardState::LockReason::None:        statusStr = @""; break;
+        case x3270::KeyboardState::LockReason::Connecting:  statusStr = @"Connecting..."; break;
+        case x3270::KeyboardState::LockReason::System:      statusStr = @"X SYS"; break;
+        case x3270::KeyboardState::LockReason::OErr:        statusStr = @"X OERR"; break;
         }
-        if (_kbd->isInsertMode()) {
-            statusStr = [statusStr stringByAppendingString:@" INS"];
+        if (_kbd->isInsertMode()) statusStr = [statusStr stringByAppendingString:@" INS"];
+    } else if (_kbd5250) {
+        switch (_kbd5250->lockReason()) {
+        case x3270::KeyboardState5250::LockReason::None:        statusStr = @"5250"; break;
+        case x3270::KeyboardState5250::LockReason::Connecting:  statusStr = @"5250  Connecting..."; break;
+        case x3270::KeyboardState5250::LockReason::System:      statusStr = @"5250  X SYS"; break;
+        case x3270::KeyboardState5250::LockReason::OErr:        statusStr = @"5250  X OERR"; break;
         }
+        if (_kbd5250->isInsertMode()) statusStr = [statusStr stringByAppendingString:@" INS"];
     }
 
     // Cursor position (1-based)
@@ -496,7 +620,7 @@ static constexpr CGFloat kGocaCellH = 12.0; // must match AH in buildQueryReply(
     static dispatch_once_t vOnce;
     dispatch_once(&vOnce, ^{
         NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
-        NSString *v = info[@"CFBundleShortVersionString"] ?: @"1.6.0";
+        NSString *v = info[@"CFBundleShortVersionString"] ?: @"1.7.0";
         NSString *b = info[@"CFBundleVersion"] ?: @"1";
         versionStr = [NSString stringWithFormat:@"DX3270 v%@ build %@  \u2014  \u00a9 2026 Swen Skalski", v, b];
     });
@@ -518,7 +642,7 @@ static constexpr CGFloat kGocaCellH = 12.0; // must match AH in buildQueryReply(
 // lookup, or on certain keyboard layouts).  Mirror the PF-key logic here so
 // those events are not silently dropped.
 - (BOOL)performKeyEquivalent:(NSEvent *)event {
-    if (!_kbd) return NO;
+    if (!_kbd && !_kbd5250) return NO;
 
     NSUInteger modifiers = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     // Let Cmd+Fkey pass through so app-level shortcuts (⌘Q, ⌘N …) still work.
@@ -531,16 +655,18 @@ static constexpr CGFloat kGocaCellH = 12.0; // must match AH in buildQueryReply(
     if (key >= NSF1FunctionKey && key <= NSF12FunctionKey) {
         int pfNum = (int)(key - NSF1FunctionKey + 1);
         if (shiftDown) pfNum += 12;   // Shift+F1-F12 → PF13-24
-        BOOL handled = _kbd->handlePF(pfNum);
+        BOOL handled = NO;
+        if (_kbd)     handled = _kbd->handlePF(pfNum);
+        if (_kbd5250) handled = _kbd5250->handlePFKey(pfNum);
         if (handled) [self setNeedsDisplay:YES];
-        else if (_kbd->lockReason() == x3270::KeyboardState::LockReason::OErr) NSBeep();
-        return YES;  // consume the event regardless so macOS takes no further action
+        else NSBeep();
+        return YES;
     }
     return [super performKeyEquivalent:event];
 }
 
 - (void)keyDown:(NSEvent *)event {
-    if (!_kbd) { [super keyDown:event]; return; }
+    if (!_kbd && !_kbd5250) { [super keyDown:event]; return; }
 
     NSUInteger modifiers = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     BOOL altDown   = (modifiers & NSEventModifierFlagOption)  != 0;
@@ -552,6 +678,66 @@ static constexpr CGFloat kGocaCellH = 12.0; // must match AH in buildQueryReply(
 
     BOOL handled = NO;
 
+    // ── 5250 keyboard ─────────────────────────────────────────────────────────
+    if (_kbd5250) {
+        if (key >= NSF1FunctionKey && key <= NSF12FunctionKey) {
+            int pfNum = (int)(key - NSF1FunctionKey + 1);
+            if (shiftDown) pfNum += 12;
+            handled = _kbd5250->handlePFKey(pfNum);
+        }
+        else if (key == '\r' || key == '\n') {
+            handled = _kbd5250->handleEnter();
+        }
+        else if (key == '\t') {
+            handled = _kbd5250->handleTab(shiftDown);
+        }
+        else if (key == 27) {
+            handled = _kbd5250->handleAttn(); // Escape = Attention in 5250
+        }
+        else if (key == NSPageUpFunctionKey) {
+            handled = _kbd5250->handlePageUp();
+        }
+        else if (key == NSPageDownFunctionKey) {
+            handled = _kbd5250->handlePageDown();
+        }
+        else if (altDown && (key == 'e' || key == 'E')) {
+            handled = _kbd5250->handleEraseField();
+        }
+        else if (key == NSHomeFunctionKey) {
+            handled = _kbd5250->handleHome();
+        }
+        else if (key == NSDeleteFunctionKey) {
+            handled = _kbd5250->handleDelete();
+        }
+        else if (key == NSBackspaceCharacter || key == NSDeleteCharacter) {
+            handled = _kbd5250->handleBackspace();
+        }
+        else if (key == NSInsertFunctionKey) {
+            handled = _kbd5250->handleInsert();
+        }
+        else if (key == NSUpArrowFunctionKey)    { handled = _kbd5250->handleArrow(-1, 0); }
+        else if (key == NSDownArrowFunctionKey)  { handled = _kbd5250->handleArrow(+1, 0); }
+        else if (key == NSLeftArrowFunctionKey)  { handled = _kbd5250->handleArrow(0, -1); }
+        else if (key == NSRightArrowFunctionKey) { handled = _kbd5250->handleArrow(0, +1); }
+        else if (!altDown) {
+            NSString *chars = event.characters;
+            if (chars.length > 0) {
+                unichar c = [chars characterAtIndex:0];
+                if (c >= 0x20 && c < 0x80) {
+                    handled = _kbd5250->handleChar(static_cast<uint8_t>(c));
+                }
+            }
+        }
+
+        if (handled) {
+            [self setNeedsDisplay:YES];
+        } else {
+            if (_kbd5250->lockReason() == x3270::KeyboardState5250::LockReason::OErr) NSBeep();
+        }
+        return;
+    }
+
+    // ── 3270 keyboard (existing logic) ────────────────────────────────────────
     // PF keys: F1-F12 (PF1-12), Shift+F1-F12 (PF13-24)
     if (key >= NSF1FunctionKey && key <= NSF12FunctionKey) {
         int pfNum = (int)(key - NSF1FunctionKey + 1);

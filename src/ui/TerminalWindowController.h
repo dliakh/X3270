@@ -2,17 +2,19 @@
 #import <AppKit/AppKit.h>
 #include "EbcdicCodec.h"
 #include "TerminalModel.h"
+#include "TerminalProtocol.h"
 #include <string>
 
-/// Owns the TN3270 session and wires the core engine to the TerminalView.
+/// Owns the TN3270 or TN5250 session and wires the core engine to the TerminalView.
 @interface TerminalWindowController : NSWindowController
 
 - (instancetype)initWithHost:(NSString*)host
                         port:(uint16_t)port
                       useSSL:(BOOL)useSSL
                     caBundle:(NSString*)caBundle
-                   codePage:(x3270::CodePage)codePage
-                       model:(x3270::TerminalModel)model;
+                    codePage:(x3270::CodePage)codePage
+                       model:(x3270::TerminalModel)model
+                    protocol:(x3270::TerminalProtocol)protocol;
 
 /// Callbacks for ConnectionWindowController to observe results
 @property (nonatomic, copy) void(^onConnected)(void);

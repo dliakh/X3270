@@ -29,6 +29,7 @@ struct Cell {
     uint8_t  fgColor   { 0x00 }; // foreground colour (0=field-default)
     uint8_t  bgColor   { 0x00 }; // background colour (0=black)
     uint8_t  highlight { 0x00 }; // 0=normal, 0xF2=reverse, 0xF4=underscore, 0xF1=blink
+    uint16_t fieldLen  { 0 };    // (FA cells only) usable character count; 0 = infer from layout
 
     bool isProtected()  const { return (attr & FA_PROTECTED) != 0; }
     bool isNumeric()    const { return (attr & FA_NUMERIC)   != 0; }
@@ -73,7 +74,16 @@ public:
     void startField(uint8_t attrByte,
                     uint8_t fgColor   = 0x00,
                     uint8_t bgColor   = 0x00,
-                    uint8_t highlight = 0x00);
+                    uint8_t highlight = 0x00,
+                    uint16_t fieldLen = 0);
+
+    /// Place an inline 5250 display-attribute byte (0x20-0x3F) at the current
+    /// buffer pointer. The attribute occupies a buffer position (rendered as a
+    /// blank) and governs all subsequent cells until the next attribute/field.
+    /// The cell is marked protected by default — input fields are introduced
+    /// only via Start-of-Field orders (which call startField() with FFW-derived
+    /// attr bits).
+    void startInlineAttr5250(uint8_t attrByte5250);
 
     /// Update the "current" SA-order colour/highlight applied to subsequent writeChar calls.
     void setCurrentFgColor(uint8_t c)   { currentFgColor_   = c; }
@@ -110,6 +120,11 @@ public:
     /// Clear MDT bit on all unprotected fields
     void resetAllMDT();
 
+    /// Move cursor to the first character of the first non-protected, non-bypass field.
+    /// Called by the 5250 parser when CC2 UNLOCK bit is set and no explicit IC order
+    /// was seen in the WTD data stream (mirrors tn5250_display_set_cursor_home).
+    void setCursorToHome();
+
     /// Set MDT on the field that owns the given buffer position
     void setMDT(int bufferPos);
 
@@ -122,15 +137,16 @@ public:
     void clearDirty()     { dirty_ = false; }
     void markDirty()      { dirty_ = true; }
 
+    /// Find the field attribute cell that governs bufPos.
+    /// Returns the index of the FA cell, or -1 if the screen is unformatted.
+    int findFieldStart(int bufPos) const;
+
 private:
     int clamp(int pos) const {
         int sz = rows_ * cols_;
         if (pos < 0) pos = (pos % sz + sz) % sz;
         return pos % sz;
     }
-
-    /// Find the field attribute cell that governs bufPos
-    int findFieldStart(int bufPos) const;
 
     TerminalModel model_;
     int     rows_;
