@@ -47,13 +47,15 @@ void KeyboardState::moveCursorToFirstUnprotected() {
 }
 
 void KeyboardState::advanceToNextField(bool forward) {
-    int cur   = screen_.cursorPos();
+    int cur = screen_.cursorPos();
     int delta = forward ? 1 : -1;
+    // When going backward, skip the current field's own FA so we land on the
+    // previous field instead of the start of the same field.
+    int currentFA = forward ? -1 : screen_.findFieldStart(cur);
     for (int i = 1; i <= screen_.size(); ++i) {
         int pos = (cur + delta * i + screen_.size() * 2) % screen_.size();
         const Cell& c = screen_.at(pos);
-        if (c.isFA && !c.isSkip()) {
-            // Move to the character position after the FA
+        if (c.isFA && !c.isSkip() && pos != currentFA) {
             screen_.setCursor((pos + 1) % screen_.size());
             return;
         }

@@ -53,8 +53,11 @@ void KeyboardState5250::moveCursorToFirstUnprotected() {
 }
 
 void KeyboardState5250::advanceToNextField(bool forward) {
-    int cur   = screen_.cursorPos();
+    int cur = screen_.cursorPos();
     int delta = forward ? 1 : -1;
+    // When going backward, skip the current field's own FA so we land on the
+    // previous field instead of the start of the same field.
+    int currentFA = forward ? -1 : screen_.findFieldStart(cur);
     for (int i = 1; i <= screen_.size(); ++i) {
         int pos = (cur + delta * i + screen_.size() * 2) % screen_.size();
         const Cell& c = screen_.at(pos);
@@ -62,7 +65,7 @@ void KeyboardState5250::advanceToNextField(bool forward) {
         // FA cells marked FA_PROTECTED (output sub-fields for colour); those
         // must be skipped, otherwise Tab gets stuck on each colour boundary
         // before ever reaching the next input field (e.g. the password field).
-        if (c.isFA && !c.isProtected() && !c.isSkip()) {
+        if (c.isFA && !c.isProtected() && !c.isSkip() && pos != currentFA) {
             screen_.setCursor((pos + 1) % screen_.size());
             return;
         }

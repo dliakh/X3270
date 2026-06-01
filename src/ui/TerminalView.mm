@@ -654,12 +654,23 @@ static constexpr CGFloat kGocaCellH = 12.0; // must match AH in buildQueryReply(
 
     if (key >= NSF1FunctionKey && key <= NSF12FunctionKey) {
         int pfNum = (int)(key - NSF1FunctionKey + 1);
-        if (shiftDown) pfNum += 12;   // Shift+F1-F12 → PF13-24
+        if (shiftDown) pfNum += 12;
         BOOL handled = NO;
         if (_kbd)     handled = _kbd->handlePF(pfNum);
         if (_kbd5250) handled = _kbd5250->handlePFKey(pfNum);
         if (handled) [self setNeedsDisplay:YES];
         else NSBeep();
+        return YES;
+    }
+    // macOS may route some key events through performKeyEquivalent: instead of
+    // keyDown: (e.g. F-keys, Tab with Full Keyboard Access).  Mirror the logic
+    // here so those events are not silently dropped.
+    if (key == '\t' || key == NSBackTabCharacter) {
+        BOOL backward = (key == NSBackTabCharacter) || shiftDown;
+        BOOL handled = NO;
+        if (_kbd)     handled = _kbd->handleTab(backward);
+        if (_kbd5250) handled = _kbd5250->handleTab(backward);
+        if (handled) [self setNeedsDisplay:YES];
         return YES;
     }
     return [super performKeyEquivalent:event];
@@ -688,8 +699,8 @@ static constexpr CGFloat kGocaCellH = 12.0; // must match AH in buildQueryReply(
         else if (key == '\r' || key == '\n') {
             handled = _kbd5250->handleEnter();
         }
-        else if (key == '\t') {
-            handled = _kbd5250->handleTab(shiftDown);
+        else if (key == '\t' || key == NSBackTabCharacter) {
+            handled = _kbd5250->handleTab((key == NSBackTabCharacter) || shiftDown);
         }
         else if (key == 27) {
             handled = _kbd5250->handleAttn(); // Escape = Attention in 5250
@@ -761,9 +772,9 @@ static constexpr CGFloat kGocaCellH = 12.0; // must match AH in buildQueryReply(
         if (shiftDown) handled = _kbd->handleNewLine();
         else           handled = _kbd->handleEnter();
     }
-    // Tab / BackTab
-    else if (key == '\t') {
-        handled = _kbd->handleTab(shiftDown);
+    // Tab / BackTab (0x0019 = NSBackTabCharacter for Shift+Tab on macOS)
+    else if (key == '\t' || key == NSBackTabCharacter) {
+        handled = _kbd->handleTab((key == NSBackTabCharacter) || shiftDown);
     }
     // Backspace
     else if (key == NSBackspaceCharacter || key == NSDeleteCharacter) {
