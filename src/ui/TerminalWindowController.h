@@ -19,6 +19,9 @@
 /// Callbacks for ConnectionWindowController to observe results
 @property (nonatomic, copy) void(^onConnected)(void);
 @property (nonatomic, copy) void(^onConnectError)(NSString*);
+/// Fired (on the main thread) when the terminal window has been closed by
+/// the user, so the owner can drop its strong reference.
+@property (nonatomic, copy) void(^onClosed)(void);
 
 /// Save a PNG screenshot of the terminal window to disk.
 - (IBAction)saveScreenshot:(id)sender;

@@ -272,6 +272,15 @@ Then run `./package_intel.sh` or `./package_all.sh` as shown above.
 
 ## Version History
 
+### v1.7.1 — 2026-06-01
+
+**Multi-session stability**
+
+- **Fixed: crash when reconnecting after closing a terminal window** — `TerminalWindowController` did not register itself as the window's delegate, so `windowWillClose:` never fired. The session and its read loop kept running in the background, and the next connect attempt (to the same or a different host) raced against the still-live controller, crashing the app. The controller now adopts `<NSWindowDelegate>` and disconnects cleanly on close.
+- **Fixed: `dealloc` running on the network thread** — The detached read-loop thread held a strong `self` capture, so the controller's final release (and the AppKit teardown it triggers) could land on a background thread. The thread now hands its reference back to the main queue at exit.
+- **Fixed: stale terminal references in the Connect dialog** — Closed terminal windows are now removed from `ConnectionWindowController`'s session list via a new `onClosed` callback, and the spurious "Connection closed" error from the read loop's parting message no longer surfaces back to the connect screen when the close was user-initiated.
+- **Multiple concurrent sessions** — With the lifecycle fixed, you can keep several terminal windows open against different hosts at the same time and open new ones from **File → New Connection…** (`⌘N`) without restarting the app.
+
 ### v1.7.0 — 2026-05-31
 
 **Full TN5250 support — IBM i / AS400**

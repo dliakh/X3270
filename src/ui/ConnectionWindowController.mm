@@ -13,6 +13,7 @@
     NSPopUpButton  *_protocolPopup;
     NSButton       *_connectButton;
     NSTextField    *_statusLabel;
+    NSButton       *_donateBtn;
 
     NSMutableArray<TerminalWindowController*>  *_terminals;
     NSMutableArray<NSDictionary*>              *_connectionHistory;
@@ -34,6 +35,7 @@
         _terminals = [NSMutableArray array];
         [self buildUI];
         [self restoreConnectionHistory];
+        [self applyBirthdayEasterEggIfNeeded];
     }
     return self;
 }
@@ -46,7 +48,7 @@
     __block CGFloat curY = 304;
 
     // ── Header: app name, version and author ──────────────────────────────────
-    NSString *version = NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"] ?: @"1.7.0";
+    NSString *version = NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"] ?: @"1.7.1";
 
     NSTextField *appName = [NSTextField labelWithString:@"DX3270"];
     appName.font = [NSFont boldSystemFontOfSize:16];
@@ -84,14 +86,14 @@
                 NSFontAttributeName: [NSFont systemFontOfSize:11],
                 NSForegroundColorAttributeName: [NSColor systemPinkColor],
             }];
-    NSButton *donateBtn = [[NSButton alloc] initWithFrame:NSMakeRect(margin, 346, hdrW, 16)];
-    [donateBtn setAttributedTitle:donateTitle];
-    donateBtn.buttonType = NSButtonTypeMomentaryLight;
-    donateBtn.bordered = NO;
-    donateBtn.target = self;
-    donateBtn.action = @selector(openDonation:);
-    donateBtn.alignment = NSTextAlignmentCenter;
-    [cv addSubview:donateBtn];
+    _donateBtn = [[NSButton alloc] initWithFrame:NSMakeRect(margin, 346, hdrW, 16)];
+    [_donateBtn setAttributedTitle:donateTitle];
+    _donateBtn.buttonType = NSButtonTypeMomentaryLight;
+    _donateBtn.bordered = NO;
+    _donateBtn.target = self;
+    _donateBtn.action = @selector(openDonation:);
+    _donateBtn.alignment = NSTextAlignmentCenter;
+    [cv addSubview:_donateBtn];
 
     NSBox *separator = [[NSBox alloc] initWithFrame:NSMakeRect(margin, 332, hdrW, 1)];
     separator.boxType = NSBoxSeparator;
@@ -190,6 +192,25 @@
         [NSURL URLWithString:@"https://buy.stripe.com/7sY9AT3VMfKi53942m3VC05"]];
 }
 
+- (void)applyBirthdayEasterEggIfNeeded {
+    NSDateComponents *today = [[NSCalendar currentCalendar]
+        components:NSCalendarUnitMonth | NSCalendarUnitDay
+          fromDate:[NSDate date]];
+    if (today.month == 6 && today.day == 21) {
+        [self showBirthdayMessage];
+    }
+}
+
+- (void)showBirthdayMessage {
+    NSMutableAttributedString *title = [[NSMutableAttributedString alloc]
+        initWithString:@"\U0001F382  Today is Swen's birthday — buy him a gift!"
+            attributes:@{
+                NSFontAttributeName: [NSFont boldSystemFontOfSize:11],
+                NSForegroundColorAttributeName: [NSColor systemPinkColor],
+            }];
+    [_donateBtn setAttributedTitle:title];
+}
+
 - (void)protocolChanged:(id)sender {
     BOOL is5250 = (_protocolPopup.indexOfSelectedItem == 1);
     if (is5250) {
@@ -251,6 +272,13 @@
 - (void)connect:(id)sender {
     NSString *raw  = [_hostCombo.stringValue stringByTrimmingCharactersInSet:
                       [NSCharacterSet whitespaceCharacterSet]];
+    // Easter egg: typing Swen's birthday in the host field reveals the
+    // birthday support message regardless of the current date.
+    if ([raw isEqualToString:@"21.06.1979"]) {
+        [self showBirthdayMessage];
+        _statusLabel.stringValue = @"";
+        return;
+    }
     // If the user (or autocomplete) left a :port suffix in the host field, split it out.
     NSString *host = raw;
     NSString *embeddedPort = nil;
@@ -338,6 +366,13 @@
                 s.statusLabel.stringValue = @"";
                 s.connectButton.enabled = YES;
             }
+        });
+    };
+    twc.onClosed = ^{
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) s = weakSelf;
+            __strong typeof(weakTwc)  t = weakTwc;
+            if (s && t) [s.terminals removeObject:t];
         });
     };
 }
