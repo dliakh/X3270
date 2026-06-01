@@ -55,7 +55,7 @@ void KeyboardState::advanceToNextField(bool forward) {
     for (int i = 1; i <= screen_.size(); ++i) {
         int pos = (cur + delta * i + screen_.size() * 2) % screen_.size();
         const Cell& c = screen_.at(pos);
-        if (c.isFA && !c.isSkip() && pos != currentFA) {
+        if (c.isFA && !c.isProtected() && !c.isSkip() && pos != currentFA) {
             screen_.setCursor((pos + 1) % screen_.size());
             return;
         }
