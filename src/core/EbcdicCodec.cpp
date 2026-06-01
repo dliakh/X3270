@@ -209,6 +209,10 @@ void EbcdicCodec::selectTables() {
 }
 
 uint16_t EbcdicCodec::toUnicode(uint8_t ebcdic) const {
+    if (altBrackets_) {
+        if (ebcdic == EBCDIC_LBRACKET_ALT) return 0x005B; // '['
+        if (ebcdic == EBCDIC_RBRACKET_ALT) return 0x005D; // ']'
+    }
     return toUnicodeTable_[ebcdic];
 }
 

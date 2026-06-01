@@ -7,6 +7,7 @@
 
 /// NSUserDefaults key – BOOL; YES = use bundled IBM 3270 font
 NSString * const kPref3270FontEnabled = @"use3270Font";
+NSString * const kPrefAltBrackets     = @"altBrackets";
 
 // ── 3270-font loader (called once) ───────────────────────────────────────────
 // Registers all three weight variants from the app bundle's Resources/fonts/
@@ -182,6 +183,7 @@ static NSColor *colorFor5250Attr(uint8_t attr) {
         _cursorColor      = [NSColor colorWithRed:0.20 green:0.85 blue:0.20 alpha:1.0]; // green
 
         [self applyFontFromPreferences];
+        _codec.setAltBrackets([[NSUserDefaults standardUserDefaults] boolForKey:kPrefAltBrackets]);
         [self recalcCellSize];
 
         _cursorTimer = [NSTimer scheduledTimerWithTimeInterval:0.6
@@ -219,6 +221,7 @@ static NSColor *colorFor5250Attr(uint8_t attr) {
 - (void)userDefaultsDidChange:(NSNotification *)note {
     [self applyFontFromPreferences];
     [self recalcCellSize];
+    _codec.setAltBrackets([[NSUserDefaults standardUserDefaults] boolForKey:kPrefAltBrackets]);
     [self setNeedsDisplay:YES];
     // Resize the window to the new preferred size (cell dimensions may have changed)
     [self.window setContentSize:[self preferredSize]];

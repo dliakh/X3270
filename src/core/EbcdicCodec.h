@@ -30,6 +30,12 @@ public:
     void setCodePage(CodePage cp);
     CodePage codePage() const { return cp_; }
 
+    /// When enabled, EBCDIC X'AD' and X'BD' are displayed as square brackets
+    /// [ and ] instead of their standard CP037/500/1047 mappings (Ý and ¨).
+    /// Some legacy C source uses these code points as brackets.
+    void setAltBrackets(bool enabled) { altBrackets_ = enabled; }
+    bool altBrackets() const { return altBrackets_; }
+
     // Special EBCDIC values (code-page independent)
     static constexpr uint8_t EBCDIC_NUL   = 0x00;
     static constexpr uint8_t EBCDIC_SPACE = 0x40;
@@ -38,8 +44,13 @@ public:
     static constexpr uint8_t EBCDIC_SO    = 0x0E;
     static constexpr uint8_t EBCDIC_SI    = 0x0F;
 
+    // EBCDIC code points for alternate bracket mapping
+    static constexpr uint8_t EBCDIC_LBRACKET_ALT = 0xAD;
+    static constexpr uint8_t EBCDIC_RBRACKET_ALT = 0xBD;
+
 private:
     CodePage cp_;
+    bool altBrackets_ { false };
     const uint16_t* toUnicodeTable_   { nullptr }; // [256]
     const uint8_t*  fromAsciiTable_   { nullptr }; // [128]
 

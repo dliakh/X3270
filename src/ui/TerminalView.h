@@ -7,6 +7,8 @@
 
 /// NSUserDefaults key – BOOL; YES = use bundled IBM 3270 font (by Ricardo Bánffy)
 extern NSString * const kPref3270FontEnabled;
+/// NSUserDefaults key – BOOL; YES = display X'AD' and X'BD' as [ and ]
+extern NSString * const kPrefAltBrackets;
 
 /// TerminalView renders the 3270/5250 screen buffer as a character grid using
 /// Core Text.  It also handles all keyboard input and forwards it to
