@@ -620,7 +620,7 @@ static constexpr CGFloat kGocaCellH = 12.0; // must match AH in buildQueryReply(
     static dispatch_once_t vOnce;
     dispatch_once(&vOnce, ^{
         NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
-        NSString *v = info[@"CFBundleShortVersionString"] ?: @"1.7.0";
+        NSString *v = info[@"CFBundleShortVersionString"] ?: @"1.7.1";
         NSString *b = info[@"CFBundleVersion"] ?: @"1";
         versionStr = [NSString stringWithFormat:@"DX3270 v%@ build %@  \u2014  \u00a9 2026 Swen Skalski", v, b];
     });

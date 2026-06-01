@@ -16,6 +16,9 @@
 #include <thread>
 #include <string>
 
+@interface TerminalWindowController () <NSWindowDelegate>
+@end
+
 @implementation TerminalWindowController {
     TerminalView*   _termView;
     DebugWindowController *_debugWC;
@@ -31,6 +34,7 @@
     std::unique_ptr<x3270::ITerminalSession>      _session;     // either
 
     std::thread _networkThread;
+    BOOL        _userClosed;
 
     NSString  *_host;
     uint16_t   _port;
@@ -62,6 +66,7 @@
     [win center];
 
     if ((self = [super initWithWindow:win])) {
+        win.delegate = self;
         _host     = [host copy];
         _port     = port;
         _useSSL   = useSSL;
@@ -80,6 +85,7 @@
 - (void)dealloc {
     if (_session) _session->disconnect();
     if (_networkThread.joinable()) _networkThread.detach();
+    _debugWC = nil;
 }
 
 // ── Engine ────────────────────────────────────────────────────────────────────
@@ -238,10 +244,13 @@
         NSString *nsMsg = [NSString stringWithUTF8String:msg.c_str()];
         dispatch_async(dispatch_get_main_queue(), ^{
             __strong auto s = weakSelf;
-            if (s) {
-                if (s.onConnectError) s.onConnectError(nsMsg);
-                [s close];
-            }
+            if (!s) return;
+            // If the user closed the window we already tore everything down,
+            // and the readLoop's parting "Connection closed" must not surface
+            // back to the connection screen.
+            if (s->_userClosed) return;
+            if (s.onConnectError) s.onConnectError(nsMsg);
+            [s close];
         });
     });
 
@@ -288,17 +297,28 @@
     bool        useSSL    = _useSSL == YES;
     std::string caBundle  = _caBundle ? [_caBundle UTF8String] : "";
 
+    // Capture self strongly so the controller stays alive while the network
+    // thread is running, but hand the final release back to the main thread
+    // so dealloc (and the AppKit teardown it triggers) never runs on a
+    // background thread.
     _networkThread = std::thread([self, host, port, useSSL, caBundle]() {
-        bool ok = _session->connect(host, port, useSSL, caBundle);
-        if (ok) {
-            _session->readLoop(); // blocks until disconnected
+        @autoreleasepool {
+            bool ok = _session->connect(host, port, useSSL, caBundle);
+            if (ok) {
+                _session->readLoop(); // blocks until disconnected
+            }
         }
+        __block TerminalWindowController *retained = self;
+        dispatch_async(dispatch_get_main_queue(), ^{ retained = nil; });
     });
     _networkThread.detach();
 }
 
 - (void)windowWillClose:(NSNotification*)notification {
+    if (_userClosed) return;
+    _userClosed = YES;
     if (_session) _session->disconnect();
+    if (self.onClosed) self.onClosed();
 }
 
 /// Open the traffic monitor panel (⌘⇧D).
